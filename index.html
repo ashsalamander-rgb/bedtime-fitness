@@ -168,6 +168,7 @@
         alert(`已成功記錄今日運動總結！`);
       };
 
+      // 💬 發送對話並智能抽取動作
       const handleSendChat = async () => {
         if (!chatInput.trim() || isChatLoading) return;
         const userText = chatInput;
@@ -178,22 +179,29 @@
         setSuggestedAction(null);
 
         try {
-          const prompt = `使用者訊息：「${userText}」。
-請親切回答。如果對話中提及了一個適合的伸展動作，請在回答最後一行附帶如下格式的 JSON（非必要不強制，若無則不需附帶）：
-{"action":{"name":"動作名","target":"部位","detail":"做法說明"}}`;
+          const prompt = `使用者問：${userText}
+請給予親切簡短的回應與伸展建議。
+如果在對話中推薦了具體的伸展動作，請在回答的最末尾，另起一行並加上這段 JSON 結構（注意：請勿將 JSON 放入 markdown 程式碼區塊中）：
+{"action":{"name":"動作名稱","target":"部位","detail":"簡短的做法說明"}}`;
+
           const ans = await callGemini(prompt);
-          
-          if (ans.includes('{"action":')) {
+
+          // 強效解析 JSON 動作標籤
+          const match = ans.match(/\{"action":\s*\{"name":[\s\S]*?\}\}/);
+          let cleanAns = ans;
+
+          if (match) {
             try {
-              const jsonMatch = ans.match(/\{"action":[\s\S]*?\}/);
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
+              const parsed = JSON.parse(match[0]);
+              if (parsed.action && parsed.action.name) {
                 setSuggestedAction(parsed.action);
               }
-            } catch (e) {}
+            } catch (e) {
+              console.error("JSON parse error:", e);
+            }
+            cleanAns = ans.replace(match[0], '').trim();
           }
 
-          const cleanAns = ans.replace(/\{"action":[\s\S]*?\}/, '').trim();
           setChatMessages([...newMsgs, { role: 'model', text: cleanAns }]);
         } catch (err) {
           alert('對話失敗: ' + err.message);
@@ -202,16 +210,27 @@
         }
       };
 
+      // 🧹 清空對話
+      const handleClearChat = () => {
+        if (confirm('確定要清空對話紀錄嗎？')) {
+          const defaultMsg = [{ role: 'model', text: '嗨！我是你的睡前健身助理。想聊聊什麼伸展動作嗎？' }];
+          setChatMessages(defaultMsg);
+          setSuggestedAction(null);
+        }
+      };
+
+      // 📥 助手推薦加入動作庫
       const addSuggestedToLibrary = (action) => {
         if (!action || !action.name) return;
-        setLibrary(prev => [...prev, {
+        const newItem = {
           id: Date.now().toString(),
           name: action.name,
           target: action.target || '全身',
           detail: action.detail || '來自助理推薦'
-        }]);
+        };
+        setLibrary(prev => [...prev, newItem]);
         setSuggestedAction(null);
-        alert(`已將「${action.name}」加入動作庫！`);
+        alert(`已將「${action.name}」成功加入動作庫！`);
       };
 
       const handleAddLibrary = () => {
@@ -231,7 +250,6 @@
         setLibrary(prev => prev.filter(item => item.id !== id));
       };
 
-      // ✏️ 開啟打卡紀錄編輯/新增 Modal
       const openLogModalForDate = (dateKey) => {
         const existing = dailyLogs[dateKey];
         setNewLogDate(dateKey);
@@ -245,7 +263,6 @@
         setShowAddLogModal(true);
       };
 
-      // 💾 儲存 (覆寫/編輯) 每日總結
       const handleSaveDailySummary = () => {
         if (!newLogDate) return;
         const mins = parseInt(newLogMins) || 0;
@@ -262,7 +279,6 @@
         setShowAddLogModal(false);
       };
 
-      // 🗑️ 刪除指定日期的打卡紀錄
       const handleDeleteDailyLog = (dateKey) => {
         if (!confirm(`確定要刪除 ${dateKey} 的打卡紀錄嗎？`)) return;
         const newLogs = { ...dailyLogs };
@@ -397,7 +413,6 @@
                   </div>
                 </div>
 
-                {/* 點選日期的總結展示與編輯/刪除按鈕 */}
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                     <div className="text-xs font-bold text-indigo-400">📅 {selectedDateKey} 運動總結</div>
@@ -465,21 +480,33 @@
             {/* TAB 4: 問助理 */}
             {activeTab === 'chat' && (
               <div className="flex flex-col h-[65vh]">
-                <div className="flex-1 overflow-y-auto space-y-2 py-2">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+                  <span className="text-xs text-gray-400">專屬伸展諮詢</span>
+                  <button onClick={handleClearChat} className="text-xs bg-slate-800 hover:bg-slate-700 text-gray-300 px-2.5 py-1 rounded-lg border border-slate-700">
+                    🧹 清空對話
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-3 py-3">
                   {chatMessages.map((msg, i) => (
                     <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] p-3 rounded-xl text-xs ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-gray-300'}`}>
+                      <div className={`max-w-[85%] p-3 rounded-xl text-xs leading-relaxed ${
+                        msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-gray-200'
+                      }`}>
                         {msg.text}
                       </div>
                     </div>
                   ))}
 
+                  {/* AI 推薦加入動作庫區塊 */}
                   {suggestedAction && (
-                    <div className="bg-slate-900 border border-amber-500/50 p-3 rounded-xl space-y-2">
-                      <div className="text-xs font-bold text-amber-400">💡 助理推薦新動作</div>
-                      <div className="text-xs text-white font-semibold">{suggestedAction.name} ({suggestedAction.target})</div>
+                    <div className="bg-slate-900 border border-amber-500/50 p-3 rounded-xl space-y-2 shadow-lg">
+                      <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
+                        💡 助理為你推薦的新動作
+                      </div>
+                      <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target})</span></div>
                       <div className="text-xs text-gray-400">{suggestedAction.detail}</div>
-                      <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-1.5 rounded-lg">
+                      <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 rounded-lg transition">
                         ＋ 直接加入動作庫
                       </button>
                     </div>
@@ -487,9 +514,10 @@
 
                   {isChatLoading && <div className="text-xs text-gray-500">助理思考中...</div>}
                 </div>
-                <div className="flex gap-2">
-                  <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="問問伸展動作，如：髖關節緊繃做什麼？" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white" />
-                  <button onClick={handleSendChat} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold">發送</button>
+
+                <div className="flex gap-2 pt-2 border-t border-slate-800">
+                  <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="問問伸展動作，如：腰酸做什麼好？" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                  <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold">發送</button>
                 </div>
               </div>
             )}
