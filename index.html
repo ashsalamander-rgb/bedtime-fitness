@@ -19,27 +19,28 @@ body { background-color: #0B0F19; color: #E5E7EB; -webkit-tap-highlight-color: t
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect } = React;
-const DEFAULT_HEALTH_NOTE = "右腿曾經扭傷；有扁平足和足底筋膜炎，容易因腳踝、足底過度受力而不適（嚴禁墊腳尖、深蹲、跳躍）。睡床上舖，動作需溫和且安靜。";
+const DEFAULT_HEALTH_NOTE="右腿曾經扭傷;有扁平足和足底筋膜炎,容易因腳踝、足底過度受力而不適(嚴禁墊腳尖、深蹲、跳躍)。睡床上舖,動作需溫和且安靜。";
 const DEFAULT_LIBRARY = [
-  { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。放鬆脊椎。', count: '10次' },
-  { id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上，雙手抱住雙膝拉向胸口，輕輕左右搖晃放鬆下背。', count: '12次' },
-  { id: '3', name: '臥姿橋式', target: '屁股', detail: '平躺膝蓋彎曲，雙腳平貼床面，臀部發力抬起，足底貼平不墊腳。', count: '15次' },
-  { id: '4', name: '仰臥腿後側伸展', target: '大腿', detail: '平躺抬腿，雙手扣住大腿後側輕拉，腳踝放鬆。', count: '10次' },
-  { id: '5', name: '睡蓮式肩膀開展', target: '肩', detail: '側臥於床上，雙手前伸重疊，上方手臂向後打開。', count: '8次' }
+{ id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿,吸氣拱背抬頭,吐氣圓背低頭。放鬆脊椎。',count: '10次'},
+{ id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上,雙手抱住雙膝拉向胸口,輕輕左右搖晃放鬆下背。',count: '12次'},
+{ id: '3', name: '臥姿橋式', target: '屁股', detail: '平躺膝蓋彎曲,雙腳平貼床面,臀部發力抬起,足底貼平不墊腳。',count: '15次'},
+{ id: '4', name: '仰臥腿後側伸展', target: '大腿', detail: '平躺抬腿,雙手扣住大腿後側輕拉,腳踝放鬆。', count: '10次'},
+{ id: '5', name: '睡蓮式肩膀開展', target: '肩', detail:'側臥於床上,雙手前伸重疊,上方手臂向後打開。', count: '8次'}
 ];
 
 function App() {
   const [activeTab, setActiveTab] = useState('today');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [proxyUrl, setProxyUrl] = useState(() => localStorage.getItem('gemini_proxy_url') || '');
+  const [jsonbinKey, setJsonbinKey] = useState(() => localStorage.getItem('jsonbin_key') || '');
+  const [jsonbinId, setJsonbinId] = useState(() => localStorage.getItem('jsonbin_id') || '6a959254da38895dfe26a097');
+  
   const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
   const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
-  
   const [library, setLibrary] = useState(() => {
     const saved = localStorage.getItem('ex_library');
     return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
   });
-  
   const [dailyLogs, setDailyLogs] = useState(() => {
     const saved = localStorage.getItem('daily_logs');
     return saved ? JSON.parse(saved) : {};
@@ -53,6 +54,7 @@ function App() {
   });
   const [checkedMenu, setCheckedMenu] = useState({});
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // 動作庫 Modal (新增 / 編輯)
   const [showLibModal, setShowLibModal] = useState(false);
@@ -70,7 +72,7 @@ function App() {
   // AI 對話
   const [chatMessages, setChatMessages] = useState(() => {
     const saved = localStorage.getItem('chat_messages');
-    return saved ? JSON.parse(saved) : [{ role: 'model', text: '嗨！我是你的睡前健身助理。想了解或新增什麼伸展動作嗎？（例如：「想加入蚌式」、「腰酸做什麼好？」）' }];
+    return saved ? JSON.parse(saved) : [{ role: 'model', text: '嗨！我是你的睡前健身助理。想了解或新增什麼伸展動作嗎？' }];
   });
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -83,11 +85,67 @@ function App() {
 
   useEffect(() => { localStorage.setItem('gemini_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('gemini_proxy_url', proxyUrl); }, [proxyUrl]);
+  useEffect(() => { localStorage.setItem('jsonbin_key', jsonbinKey); }, [jsonbinKey]);
+  useEffect(() => { localStorage.setItem('jsonbin_id', jsonbinId); }, [jsonbinId]);
   useEffect(() => { localStorage.setItem('health_note', healthNote); }, [healthNote]);
   useEffect(() => { localStorage.setItem('ex_library', JSON.stringify(library)); }, [library]);
   useEffect(() => { localStorage.setItem('daily_logs', JSON.stringify(dailyLogs)); }, [dailyLogs]);
   useEffect(() => { localStorage.setItem('today_menu', JSON.stringify(todayMenu)); }, [todayMenu]);
   useEffect(() => { localStorage.setItem('chat_messages', JSON.stringify(chatMessages)); }, [chatMessages]);
+
+  // ☁️ JSONBin 同步邏輯：上傳
+  const syncToCloud = async () => {
+    if (!jsonbinKey || !jsonbinId) {
+      alert("請先在「設定」中填入 JSONBin Master Key 與 Bin ID！");
+      setShowKeyModal(true);
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${jsonbinId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': jsonbinKey
+        },
+        body: JSON.stringify({ library, dailyLogs, healthNote })
+      });
+      if (!res.ok) throw new Error('上傳失敗，請檢查 Key/ID 是否正確');
+      alert("✅ 資料已成功上傳至雲端！");
+    } catch (err) {
+      alert("❌ 同步失敗：" + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 🔄 JSONBin 同步邏輯：下載
+  const loadFromCloud = async () => {
+    if (!jsonbinKey || !jsonbinId) {
+      alert("請先在「設定」中填入 JSONBin Master Key 與 Bin ID！");
+      setShowKeyModal(true);
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${jsonbinId}/latest`, {
+        headers: { 'X-Master-Key': jsonbinKey }
+      });
+      if (!res.ok) throw new Error('讀取失敗，請檢查 Key/ID 是否正確');
+      const data = await res.json();
+      const record = data.record;
+      if (record) {
+        if (record.library) setLibrary(record.library);
+        if (record.dailyLogs) setDailyLogs(record.dailyLogs);
+        if (record.healthNote) setHealthNote(record.healthNote);
+        alert("✅ 已成功從雲端同步最新資料到此裝置！");
+      }
+    } catch (err) {
+      alert("❌ 載入失敗：" + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const callGemini = async (promptText) => {
     if (!apiKey) {
@@ -95,16 +153,14 @@ function App() {
       throw new Error('請先設定 Gemini API Key');
     }
     let baseUrl = "https://generativelanguage.googleapis.com";
-    if (proxyUrl.trim()) {
-      baseUrl = proxyUrl.trim().replace(/\/$/, "");
-    }
+    if (proxyUrl.trim()) baseUrl = proxyUrl.trim().replace(/\/$/, "");
     const url = `${baseUrl}/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: promptText }] }],
-        systemInstruction: { parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者限制：${healthNote}。請確保動作安全。` }] }
+        systemInstruction: { parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者限制：${healthNote}。請確保動作安全。` }]}
       })
     });
     const data = await res.json();
@@ -116,10 +172,7 @@ function App() {
     setIsGenerating(true);
     try {
       const libraryStr = JSON.stringify(library.map(l => ({ name: l.name, target: l.target, detail: l.detail, count: l.count || '10次' })));
-      const prompt = `使用者動作庫：${libraryStr}。
-請優先從上述「使用者動作庫」中挑選組合出今日的睡前伸展菜單。
-今天身體狀況：${todayCondition}。想加強部位：${selectedTargets.join(',') || '由 AI 決定'}。
-請嚴格僅輸出 JSON 陣列，格式為：[{"name":"動作名","target":"部位","detail":"做法","count":"12次"}]`;
+      const prompt = `使用者動作庫：${libraryStr}。請優先從上述「使用者動作庫」中挑選組合出今日的睡前伸展菜單。今天身體狀況：${todayCondition}。想加強部位：${selectedTargets.join(',') || '由 AI 決定'}。請嚴格僅輸出 JSON 陣列，格式為：[{"name":"動作名","target":"部位","detail":"做法","count":"12次"}]`;
       const text = await callGemini(prompt);
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
       const menuData = JSON.parse(cleanText);
@@ -135,21 +188,12 @@ function App() {
 
   const saveCheckedMenuLogs = () => {
     const completed = todayMenu.filter((_, idx) => checkedMenu[idx]);
-    if (completed.length === 0) {
-      alert("請先勾選今日已完成的動作！");
-      return;
-    }
+    if (completed.length === 0) { alert("請先勾選今日已完成的動作！"); return; }
     const todayKey = new Date().toISOString().split('T')[0];
     const completedNames = completed.map(c => `${c.name}(${c.count || '已完成'})`).join('、');
     const existing = dailyLogs[todayKey] || { summary: '' };
     const updatedSummary = existing.summary ? `${existing.summary}；${completedNames}` : completedNames;
-
-    setDailyLogs({
-      ...dailyLogs,
-      [todayKey]: {
-        summary: updatedSummary
-      }
-    });
+    setDailyLogs({ ...dailyLogs, [todayKey]: { summary: updatedSummary } });
     alert("已成功記錄今日運動總結！");
   };
 
@@ -161,130 +205,72 @@ function App() {
     setChatInput('');
     setIsChatLoading(true);
     setSuggestedAction(null);
-
     try {
-      const prompt = `使用者訊息：${userText}
-說明：
-1. 請以親切專業的語氣回答使用者，並整理該動作的要點（如安全注意事項、做法細節）。
-2. 如果使用者「明確提及某個動作（如：我想做蚌式、幫我加蚌式）」或「你為其推薦了一個具體的伸展動作」，請嚴格在回答最末尾另起一行，附上以下 JSON 結構（注意：切勿使用 markdown 程式碼塊包裹）：
-{"action":{"name":"精確動作名稱","target":"部位（如：髖部/腰/背/肩）","detail":"動作要點說明（15~30字簡短精確）","count":"建議次數（如：每邊10次）"}}
-3. 如果使用者只是單純聊天、問候或沒有提及/推薦具體動作，請勿輸出上述 JSON。`;
-
+      const prompt = `使用者訊息:${userText}\n說明:\n1. 請以親切專業的語氣回答使用者,並整理該動作的要點。\n2. 如果使用者「明確提及某個動作」或「你為其推薦了一個具體的伸展動作」,請嚴格在回答最末尾另起一行,附上以下JSON 結構(切勿使用 markdown 包裹):\n{"action":{"name":"精確動作名稱","target":"部位","detail":"動作要點說明(15~30字)","count":"建議次數"}}\n3. 若無提及動作請勿輸出JSON。`;
       const ans = await callGemini(prompt);
       const match = ans.match(/{"action":\s*{"name":[\s\S]*?}}/);
       let cleanAns = ans;
-
       if (match) {
         try {
           const parsed = JSON.parse(match[0]);
-          if (parsed.action && parsed.action.name) {
-            setSuggestedAction(parsed.action);
-          }
-        } catch (e) {
-          console.error("JSON parse error:", e);
-        }
-        cleanAns = ans.replace(match[0], '').trim();
+          if (parsed.action && parsed.action.name) setSuggestedAction(parsed.action);
+        } catch (e) { console.error("JSON parse error:", e); }
+        cleanAns = ans.replace(match[0], "").trim();
       }
       setChatMessages([...newMsgs, { role: 'model', text: cleanAns }]);
     } catch (err) {
-      alert('對話失敗: ' + err.message);
+      alert('對話失敗:' + err.message);
     } finally {
       setIsChatLoading(false);
     }
   };
 
   const handleClearChat = () => {
-    if (confirm('確定要清空對話紀錄嗎？')) {
-      const defaultMsg = [{ role: 'model', text: '嗨！我是你的睡前健身助理。想了解或新增什麼伸展動作嗎？' }];
-      setChatMessages(defaultMsg);
+    if (confirm('確定要清空對話紀錄嗎?')) {
+      setChatMessages([{ role: 'model', text: '嗨!我是你的睡前健身助理。想了解或新增什麼伸展動作嗎?' }]);
       setSuggestedAction(null);
     }
   };
 
   const addSuggestedToLibrary = (action) => {
     if (!action || !action.name) return;
-    const newItem = {
-      id: Date.now().toString(),
-      name: action.name,
-      target: action.target || '全身',
-      detail: action.detail || '來自助理推薦',
-      count: action.count || '10次'
-    };
+    const newItem = { id: Date.now().toString(), name: action.name, target: action.target || '全身', detail: action.detail || '來自助理推薦', count: action.count || '10次' };
     setLibrary(prev => [...prev, newItem]);
     setSuggestedAction(null);
-    alert(`已將「${action.name}」成功加入動作庫！`);
+    alert(`已將「${action.name}」成功加入動作庫!`);
   };
 
   const openAddLibModal = () => {
-    setEditingLibId(null);
-    setLibName('');
-    setLibTarget('全身');
-    setLibDetail('');
-    setLibCount('10次');
-    setShowLibModal(true);
+    setEditingLibId(null); setLibName(''); setLibTarget('全身'); setLibDetail(''); setLibCount('10次'); setShowLibModal(true);
   };
-
   const openEditLibModal = (item) => {
-    setEditingLibId(item.id);
-    setLibName(item.name || '');
-    setLibTarget(item.target || '全身');
-    setLibDetail(item.detail || '');
-    setLibCount(item.count || '10次');
-    setShowLibModal(true);
+    setEditingLibId(item.id); setLibName(item.name || ''); setLibTarget(item.target || '全身'); setLibDetail(item.detail || ''); setLibCount(item.count || '10次'); setShowLibModal(true);
   };
-
   const handleSaveLibrary = () => {
     if (!libName.trim()) return;
     if (editingLibId) {
-      setLibrary(prev => prev.map(item => item.id === editingLibId ? {
-        ...item,
-        name: libName.trim(),
-        target: libTarget || '全身',
-        detail: libDetail.trim() || '無說明',
-        count: libCount.trim() || '10次'
-      } : item));
+      setLibrary(prev => prev.map(item => item.id === editingLibId ? { ...item, name: libName.trim(), target: libTarget || '全身', detail: libDetail.trim() || '無說明', count: libCount.trim() || '10次' } : item));
     } else {
-      setLibrary(prev => [...prev, {
-        id: Date.now().toString(),
-        name: libName.trim(),
-        target: libTarget || '全身',
-        detail: libDetail.trim() || '無說明',
-        count: libCount.trim() || '10次'
-      }]);
+      setLibrary(prev => [...prev, { id: Date.now().toString(), name: libName.trim(), target: libTarget || '全身', detail: libDetail.trim() || '無說明', count: libCount.trim() || '10次' }]);
     }
     setShowLibModal(false);
   };
-
   const handleDeleteLibrary = (id) => {
-    if (confirm('確定要刪除這個動作嗎？')) {
-      setLibrary(prev => prev.filter(item => item.id !== id));
-    }
+    if (confirm('確定要刪除這個動作嗎?')) setLibrary(prev => prev.filter(item => item.id !== id));
   };
 
   const openLogModalForDate = (dateKey) => {
-    const existing = dailyLogs[dateKey];
     setNewLogDate(dateKey);
-    if (existing) {
-      setNewLogSummary(existing.summary || '');
-    } else {
-      setNewLogSummary('');
-    }
+    setNewLogSummary(dailyLogs[dateKey] ? dailyLogs[dateKey].summary || '' : '');
     setShowAddLogModal(true);
   };
-
   const handleSaveDailySummary = () => {
     if (!newLogDate) return;
-    setDailyLogs({
-      ...dailyLogs,
-      [newLogDate]: {
-        summary: newLogSummary.trim() || '完成睡前伸展'
-      }
-    });
+    setDailyLogs({ ...dailyLogs, [newLogDate]: { summary: newLogSummary.trim() || '完成睡前伸展' } });
     setShowAddLogModal(false);
   };
-
   const handleDeleteDailyLog = (dateKey) => {
-    if (!confirm(`確定要刪除 ${dateKey} 的打卡紀錄嗎？`)) return;
+    if (!confirm(`確定要刪除${dateKey}的打卡紀錄嗎?`)) return;
     const newLogs = { ...dailyLogs };
     delete newLogs[dateKey];
     setDailyLogs(newLogs);
@@ -294,9 +280,7 @@ function App() {
     const firstDay = new Date(currentYear, currentMonth, 1).getDay();
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const days = [];
-    for (let i = 0; i < firstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="h-10"></div>);
-    }
+    for (let i = 0; i < firstDay; i++) days.push(<div key={`empty-${i}`} className="h-10"></div>);
     for (let d = 1; d <= daysInMonth; d++) {
       const monthStr = String(currentMonth + 1).padStart(2, '0');
       const dayStr = String(d).padStart(2, '0');
@@ -304,17 +288,9 @@ function App() {
       const hasLog = !!dailyLogs[dateKey];
       const isSelected = selectedDateKey === dateKey;
       days.push(
-        <button
-          key={dateKey}
-          onClick={() => setSelectedDateKey(dateKey)}
-          className={`h-10 border border-slate-800 rounded-lg flex flex-col items-center justify-center relative text-xs transition ${
-            isSelected ? 'bg-indigo-900/60 border-indigo-500 text-white' : 'bg-slate-900 text-gray-300'
-          }`}
-        >
+        <button key={dateKey} onClick={() => setSelectedDateKey(dateKey)} className={`h-10 border border-slate-800 rounded-lg flex flex-col items-center justify-center relative text-xs transition ${isSelected ? 'bg-indigo-900/60 border-indigo-500 text-white' : 'bg-slate-900 text-gray-300'}`}>
           <span>{d}</span>
-          {hasLog && (
-            <span className="absolute bottom-0.5 text-[10px] text-emerald-400 font-bold">✔</span>
-          )}
+          {hasLog && <span className="absolute bottom-0.5 text-[10px] text-emerald-400 font-bold">•</span>}
         </button>
       );
     }
@@ -324,8 +300,16 @@ function App() {
   return (
     <div className="max-w-md mx-auto min-h-screen flex flex-col bg-slate-950 pb-20">
       <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
-        <h1 className="text-lg font-bold text-indigo-400">🌙 睡前健身助理</h1>
-        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與代理</button>
+        <h1 className="text-lg font-bold text-indigo-400">睡前健身助理</h1>
+        <div className="flex gap-1.5 items-center">
+          <button onClick={syncToCloud} disabled={isSyncing} className="text-xs bg-indigo-900/80 text-indigo-200 px-2 py-1 rounded-lg border border-indigo-700 hover:bg-indigo-800">
+            ☁️ 上傳
+          </button>
+          <button onClick={loadFromCloud} disabled={isSyncing} className="text-xs bg-emerald-950 text-emerald-300 px-2 py-1 rounded-lg border border-emerald-800 hover:bg-emerald-900">
+            🔄 同步
+          </button>
+          <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-2 py-1 rounded-lg border border-slate-700 text-gray-300">⚙️ 設定</button>
+        </div>
       </header>
 
       <main className="p-4 flex-1 space-y-4">
@@ -336,7 +320,6 @@ function App() {
               <div className="text-amber-400 font-semibold mb-1">⚠️ 身體狀況限制</div>
               <div className="text-gray-400">{healthNote}</div>
             </div>
-
             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
               <label className="text-xs font-semibold text-gray-300">今天身體狀況</label>
               <div className="flex gap-2 flex-wrap">
@@ -345,7 +328,6 @@ function App() {
                 ))}
               </div>
             </div>
-
             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
               <label className="text-xs font-semibold text-gray-300">加強部位 (可多選)</label>
               <div className="flex gap-2 flex-wrap">
@@ -357,11 +339,9 @@ function App() {
                 })}
               </div>
             </div>
-
             <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm">
               {isGenerating ? '從動作庫抽取生成中...' : '✨ 從動作庫生成今日菜單'}
             </button>
-
             {todayMenu.length > 0 && (
               <div className="space-y-3 pt-2">
                 <h2 className="text-sm font-bold text-gray-300">今日菜單</h2>
@@ -369,13 +349,13 @@ function App() {
                   <div key={i} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-start gap-3">
                     <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4" />
                     <div>
-                      <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} · {m.count || '10次'})</span></div>
+                      <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} {m.count || '10次'})</span></div>
                       <div className="text-xs text-gray-400 mt-1">{m.detail}</div>
                     </div>
                   </div>
                 ))}
                 <button onClick={saveCheckedMenuLogs} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs">
-                  ✅ 勾選完成，儲存今日運動總結至月曆
+                  勾選完成,儲存今日運動總結至月曆
                 </button>
               </div>
             )}
@@ -388,57 +368,39 @@ function App() {
             <div className="flex justify-between items-center">
               <h2 className="font-bold text-sm text-white">運動打卡月曆</h2>
               <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
-                ＋ 手動補／編輯打卡
+                + 手動補/編輯打卡
               </button>
             </div>
-
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3">
               <div className="flex justify-between items-center text-xs text-gray-300 font-bold px-1">
-                <button onClick={() => {
-                  if(currentMonth === 0) { setCurrentMonth(11); setCurrentYear(currentYear-1); }
-                  else { setCurrentMonth(currentMonth-1); }
-                }} className="px-2 py-1 bg-slate-800 rounded">◀</button>
-                <span>{currentYear} 年 {currentMonth + 1} 月</span>
-                <button onClick={() => {
-                  if(currentMonth === 11) { setCurrentMonth(0); setCurrentYear(currentYear+1); }
-                  else { setCurrentMonth(currentMonth+1); }
-                }} className="px-2 py-1 bg-slate-800 rounded">▶</button>
+                <button onClick={() => { if(currentMonth===0){setCurrentMonth(11); setCurrentYear(currentYear-1);} else{setCurrentMonth(currentMonth-1);} }} className="px-2 py-1 bg-slate-800 rounded">&lt;</button>
+                <span>{currentYear}年{currentMonth + 1}月</span>
+                <button onClick={() => { if(currentMonth===11){setCurrentMonth(0); setCurrentYear(currentYear+1);} else{setCurrentMonth(currentMonth+1);} }} className="px-2 py-1 bg-slate-800 rounded">&gt;</button>
               </div>
               <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-gray-500">
                 <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
               </div>
-              <div className="grid grid-cols-7 gap-1">
-                {renderCalendarDays()}
-              </div>
+              <div className="grid grid-cols-7 gap-1">{renderCalendarDays()}</div>
             </div>
-
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
                 <div className="text-xs font-bold text-indigo-400">📅 {selectedDateKey} 運動總結</div>
                 {dailyLogs[selectedDateKey] && (
                   <div className="flex gap-2">
-                    <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-[11px] bg-indigo-900/80 text-indigo-200 px-2.5 py-1 rounded-lg border border-indigo-700">
-                      ✏️ 編輯
-                    </button>
-                    <button onClick={() => handleDeleteDailyLog(selectedDateKey)} className="text-[11px] bg-red-950 text-red-300 px-2 py-1 rounded-lg border border-red-800">
-                      🗑️ 刪除
-                    </button>
+                    <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-[11px] bg-indigo-900/80 text-indigo-200 px-2.5 py-1 rounded-lg border border-indigo-700">編輯</button>
+                    <button onClick={() => handleDeleteDailyLog(selectedDateKey)} className="text-[11px] bg-red-950 text-red-300 px-2 py-1 rounded-lg border border-red-800">刪除</button>
                   </div>
                 )}
               </div>
               {dailyLogs[selectedDateKey] ? (
                 <div className="space-y-1 text-xs">
-                  <div className="text-emerald-400 font-semibold">✔ 當天已完成運動</div>
-                  <div className="text-gray-300 mt-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800 leading-relaxed">
-                    {dailyLogs[selectedDateKey].summary}
-                  </div>
+                  <div className="text-emerald-400 font-semibold">當天已完成運動</div>
+                  <div className="text-gray-300 mt-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800 leading-relaxed">{dailyLogs[selectedDateKey].summary}</div>
                 </div>
               ) : (
                 <div className="text-xs text-gray-500 py-3 flex justify-between items-center">
                   <span>這天尚未有運動紀錄。</span>
-                  <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-indigo-400 underline font-semibold">
-                    新增這天的打卡
-                  </button>
+                  <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-indigo-400 underline font-semibold">新增這天的打卡</button>
                 </div>
               )}
             </div>
@@ -450,26 +412,18 @@ function App() {
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <h2 className="font-bold text-sm text-white">動作庫 ({library.length})</h2>
-              <button onClick={openAddLibModal} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
-                ＋ 手動新增動作
-              </button>
+              <button onClick={openAddLibModal} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">+ 手動新增動作</button>
             </div>
             <div className="space-y-2">
               {library.map(item => (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
                   <div className="space-y-1 pr-2">
-                    <div className="font-bold text-indigo-300 text-sm">
-                      {item.name} <span className="text-xs text-gray-400">({item.target} · {item.count || '10次'})</span>
-                    </div>
+                    <div className="font-bold text-indigo-300 text-sm">{item.name} <span className="text-xs text-gray-400">({item.target} · {item.count || '10次'})</span></div>
                     <div className="text-xs text-gray-400">{item.detail}</div>
                   </div>
                   <div className="flex gap-1">
-                    <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 text-xs p-1">
-                      ✏️
-                    </button>
-                    <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 text-xs p-1">
-                      🗑️
-                    </button>
+                    <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 text-xs p-1">✏️</button>
+                    <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 text-xs p-1">🗑️</button>
                   </div>
                 </div>
               ))}
@@ -482,36 +436,26 @@ function App() {
           <div className="flex flex-col h-[65vh]">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
               <span className="text-xs text-gray-400">專屬伸展諮詢</span>
-              <button onClick={handleClearChat} className="text-xs bg-slate-800 hover:bg-slate-700 text-gray-300 px-2.5 py-1 rounded-lg border border-slate-700">
-                🧹 清空對話
-              </button>
+              <button onClick={handleClearChat} className="text-xs bg-slate-800 hover:bg-slate-700 text-gray-300 px-2.5 py-1 rounded-lg border border-slate-700">清空對話</button>
             </div>
             <div className="flex-1 overflow-y-auto space-y-3 py-3">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] p-3 rounded-xl text-xs leading-relaxed ${
-                    msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-gray-200'
-                  }`}>
-                    {msg.text}
-                  </div>
+                  <div className={`max-w-[85%] p-3 rounded-xl text-xs leading-relaxed ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-gray-200'}`}>{msg.text}</div>
                 </div>
               ))}
               {suggestedAction && (
                 <div className="bg-slate-900 border border-amber-500/50 p-3 rounded-xl space-y-2 shadow-lg">
-                  <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                    💡 確定將此動作加入動作庫？
-                  </div>
-                  <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target} · {suggestedAction.count || '10次'})</span></div>
+                  <div className="text-xs font-bold text-amber-400 flex items-center gap-1">確定將此動作加入動作庫?</div>
+                  <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target} {suggestedAction.count || '10次'})</span></div>
                   <div className="text-xs text-gray-400">{suggestedAction.detail}</div>
-                  <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 rounded-lg transition">
-                    ＋ 直接加入動作庫
-                  </button>
+                  <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 rounded-lg transition">+ 直接加入動作庫</button>
                 </div>
               )}
-              {isChatLoading && <div className="text-xs text-gray-500">助理思考中...</div>}
             </div>
+            {isChatLoading && <div className="text-xs text-gray-500 pb-2">助理思考中...</div>}
             <div className="flex gap-2 pt-2 border-t border-slate-800">
-              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="輸入如：我想做蚌式，幫我整理要點" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500" />
+              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="輸入如:我想做蚌式,幫我整理要點" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500" />
               <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold">發送</button>
             </div>
           </div>
@@ -563,20 +507,28 @@ function App() {
         </div>
       )}
 
-      {/* Modal: API Key & Proxy 設定 */}
+      {/* Modal: API Key & JSONBin 設定 */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
-            <h3 className="font-bold text-white text-base">設定 Gemini API</h3>
+            <h3 className="font-bold text-white text-base">⚙️ 系統與雲端設定</h3>
             <div>
               <label className="text-[10px] text-gray-400">Gemini API Key</label>
               <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
             </div>
             <div>
-              <label className="text-[10px] text-gray-400">Cloudflare Proxy 網址 (若無限制可留空)</label>
+              <label className="text-[10px] text-gray-400">JSONBin Master Key (雲端同步用)</label>
+              <input type="password" value={jsonbinKey} onChange={e => setJsonbinKey(e.target.value)} placeholder="$2a$10$..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400">JSONBin Bin ID</label>
+              <input type="text" value={jsonbinId} onChange={e => setJsonbinId(e.target.value)} placeholder="6a959..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400">Cloudflare Proxy 網址 (可留空)</label>
               <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} placeholder="https://xxx.workers.dev" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
             </div>
-            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">儲存並開始</button>
+            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">儲存設定</button>
           </div>
         </div>
       )}
