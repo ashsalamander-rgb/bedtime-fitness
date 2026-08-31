@@ -20,16 +20,28 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
+
+    // 工具函式：精準取得香港時區 (Asia/HongKong) 的 YYYY-MM-DD
+    const getHongKongDateKey = (date = new Date()) => {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/HongKong',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      return formatter.format(date); // 格式為 YYYY-MM-DD
+    };
 
     const DEFAULT_HEALTH_NOTE = "右腿曾經扭傷；有扁平足和足底筋膜炎，容易因腳踝、足底過度受力而不適（嚴禁墊腳尖、深蹲、跳躍）。睡床上舖，動作需溫和且安靜。";
 
+    // 預設動作庫改為「計次/組數」
     const DEFAULT_LIBRARY = [
-      { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。放鬆脊椎。' },
-      { id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上，雙手抱住雙膝拉向胸口，輕輕左右搖晃放鬆下背。' },
-      { id: '3', name: '臥姿橋式', target: '屁股', detail: '平躺膝蓋彎曲，雙腳平貼床面，臀部發力抬起，足底貼平不墊腳。' },
-      { id: '4', name: '仰臥腿後側伸展', target: '大腿', detail: '平躺抬腿，雙手扣住大腿後側輕拉，腳踝放鬆。' },
-      { id: '5', name: '睡蓮式肩膀開展', target: '肩', detail: '側臥於床上，雙手前伸重疊，上方手臂向後打開。' }
+      { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。放鬆脊椎。', reps: '10次 × 2組' },
+      { id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上，雙手抱住雙膝拉向胸口，輕輕左右搖晃放鬆下背。', reps: '保持15秒 × 3次' },
+      { id: '3', name: '臥姿橋式', target: '屁股', detail: '平躺膝蓋彎曲，雙腳平貼床面，臀部發力抬起，足底貼平不墊腳。', reps: '12次 × 2組' },
+      { id: '4', name: '仰臥腿後側伸展', target: '大腿', detail: '平躺抬腿，雙手扣住大腿後側輕拉，腳踝放鬆。', reps: '每邊15秒 × 2組' },
+      { id: '5', name: '睡蓮式肩膀開展', target: '肩', detail: '側臥於床上，雙手前伸重疊，上方手臂向後打開。', reps: '每邊8次 × 2組' }
     ];
 
     function App() {
@@ -51,7 +63,7 @@
 
       const [todayCondition, setTodayCondition] = useState('一切正常');
       const [selectedTargets, setSelectedTargets] = useState([]);
-      const [duration, setDuration] = useState('10');
+      const [duration, setDuration] = useState('10'); // 控制在 10 分鐘左右
       const [todayMenu, setTodayMenu] = useState(() => {
         const saved = localStorage.getItem('today_menu');
         return saved ? JSON.parse(saved) : [];
@@ -64,10 +76,11 @@
       const [newLibName, setNewLibName] = useState('');
       const [newLibTarget, setNewLibTarget] = useState('全身');
       const [newLibDetail, setNewLibDetail] = useState('');
+      const [newLibReps, setNewLibReps] = useState('10次 × 2組');
 
       // 手動紀錄 / 編輯 Modal
       const [showAddLogModal, setShowAddLogModal] = useState(false);
-      const [newLogDate, setNewLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+      const [newLogDate, setNewLogDate] = useState(() => getHongKongDateKey());
       const [newLogSummary, setNewLogSummary] = useState('');
       const [newLogMins, setNewLogMins] = useState('10');
 
@@ -79,11 +92,13 @@
       const [chatInput, setChatInput] = useState('');
       const [isChatLoading, setIsChatLoading] = useState(false);
       const [suggestedAction, setSuggestedAction] = useState(null);
+      const chatEndRef = useRef(null);
 
-      // 月曆檢視
-      const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
-      const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
-      const [selectedDateKey, setSelectedDateKey] = useState(new Date().toISOString().split('T')[0]);
+      // 月曆檢視（採用香港時區計算目前年月）
+      const hkNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/HongKong" }));
+      const [currentYear, setCurrentYear] = useState(hkNow.getFullYear());
+      const [currentMonth, setCurrentMonth] = useState(hkNow.getMonth());
+      const [selectedDateKey, setSelectedDateKey] = useState(getHongKongDateKey());
 
       useEffect(() => { localStorage.setItem('gemini_api_key', apiKey); }, [apiKey]);
       useEffect(() => { localStorage.setItem('gemini_proxy_url', proxyUrl); }, [proxyUrl]);
@@ -92,6 +107,12 @@
       useEffect(() => { localStorage.setItem('daily_logs', JSON.stringify(dailyLogs)); }, [dailyLogs]);
       useEffect(() => { localStorage.setItem('today_menu', JSON.stringify(todayMenu)); }, [todayMenu]);
       useEffect(() => { localStorage.setItem('chat_messages', JSON.stringify(chatMessages)); }, [chatMessages]);
+
+      useEffect(() => {
+        if (activeTab === 'chat') {
+          chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, [chatMessages, activeTab, isChatLoading]);
 
       const callGemini = async (promptText) => {
         if (!apiKey) {
@@ -103,14 +124,14 @@
         if (proxyUrl.trim()) {
           baseUrl = proxyUrl.trim().replace(/\/$/, "");
         }
-        const url = `${baseUrl}/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        const url = `${baseUrl}/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: promptText }] }],
-            systemInstruction: { parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者限制：${healthNote}。請確保動作安全。` }] }
+            systemInstruction: { parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者限制：${healthNote}。請確保動作安全，且偏向計次/組數型式的輕量床上下伸展。` }] }
           })
         });
         const data = await res.json();
@@ -121,20 +142,21 @@
       const generateMenu = async () => {
         setIsGenerating(true);
         try {
-          const libraryStr = JSON.stringify(library.map(l => ({ name: l.name, target: l.target, detail: l.detail })));
+          const libraryStr = JSON.stringify(library.map(l => ({ name: l.name, target: l.target, detail: l.detail, reps: l.reps || '10次 × 2組' })));
           const prompt = `使用者動作庫：${libraryStr}。
 請優先從上述「使用者動作庫」中挑選組合出今日的睡前伸展菜單。
-總時長：${duration}分鐘。今天身體狀況：${todayCondition}。想加強部位：${selectedTargets.join(',') || '由 AI 決定'}。
-請嚴格僅輸出 JSON 陣列，格式為：[{"name":"動作名","target":"部位","detail":"做法","duration":"2分鐘"}]`;
+目標總運動時間：大約 ${duration} 分鐘。今天身體狀況：${todayCondition}。想加強部位：${selectedTargets.join(',') || '由 AI 決定'}。
+請注意：動作請以「次數/組數」或「靜止秒數」標示（例如：10次 × 2組 或 15秒 × 3組）。
+請嚴格僅輸出 JSON 陣列，格式為：[{"name":"動作名","target":"部位","detail":"做法","reps":"10次 × 2組"}]`;
           
           const text = await callGemini(prompt);
-          const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          const cleanText = text.replace(/```json/gi, '').replace(/```/g, '').trim();
           const menuData = JSON.parse(cleanText);
           setTodayMenu(menuData);
           setCheckedMenu({});
         } catch (err) {
           alert("產生失敗: " + err.message + "。已從動作庫載入預設菜單。");
-          setTodayMenu(library.slice(0, 4).map(i => ({ ...i, duration: '2分鐘' })));
+          setTodayMenu(library.slice(0, 4));
         } finally {
           setIsGenerating(false);
         }
@@ -146,9 +168,10 @@
           alert("請先勾選今日已完成的動作！");
           return;
         }
-        const todayKey = new Date().toISOString().split('T')[0];
+        const todayKey = getHongKongDateKey();
         const completedNames = completed.map(c => c.name).join('、');
-        const mins = completed.length * 2;
+        // 大約抓 10 分鐘左右或按完成比例計算
+        const mins = Math.max(5, Math.round((completed.length / todayMenu.length) * parseInt(duration)));
         const cal = Math.round(mins * 3.5);
 
         const existing = dailyLogs[todayKey] || { totalMins: 0, totalCal: 0, summary: '' };
@@ -168,7 +191,6 @@
         alert(`已成功記錄今日運動總結！`);
       };
 
-      // 💬 發送對話並智能抽取動作
       const handleSendChat = async () => {
         if (!chatInput.trim() || isChatLoading) return;
         const userText = chatInput;
@@ -181,12 +203,11 @@
         try {
           const prompt = `使用者問：${userText}
 請給予親切簡短的回應與伸展建議。
-如果在對話中推薦了具體的伸展動作，請在回答的最末尾，另起一行並加上這段 JSON 結構（注意：請勿將 JSON 放入 markdown 程式碼區塊中）：
-{"action":{"name":"動作名稱","target":"部位","detail":"簡短的做法說明"}}`;
+如果在對話中推薦了具體的伸展動作，請在回答的最末尾，另起一行並加上這段 JSON 結構（注意：請勿將 JSON 放入 markdown 程式碼區塊中，次數請用 reps）：
+{"action":{"name":"動作名稱","target":"部位","detail":"簡短的做法說明","reps":"建議次數，如 10次 × 2組"}}`;
 
           const ans = await callGemini(prompt);
 
-          // 強效解析 JSON 動作標籤
           const match = ans.match(/\{"action":\s*\{"name":[\s\S]*?\}\}/);
           let cleanAns = ans;
 
@@ -210,7 +231,6 @@
         }
       };
 
-      // 🧹 清空對話
       const handleClearChat = () => {
         if (confirm('確定要清空對話紀錄嗎？')) {
           const defaultMsg = [{ role: 'model', text: '嗨！我是你的睡前健身助理。想聊聊什麼伸展動作嗎？' }];
@@ -219,14 +239,14 @@
         }
       };
 
-      // 📥 助手推薦加入動作庫
       const addSuggestedToLibrary = (action) => {
         if (!action || !action.name) return;
         const newItem = {
           id: Date.now().toString(),
           name: action.name,
           target: action.target || '全身',
-          detail: action.detail || '來自助理推薦'
+          detail: action.detail || '來自助理推薦',
+          reps: action.reps || '10次 × 2組'
         };
         setLibrary(prev => [...prev, newItem]);
         setSuggestedAction(null);
@@ -239,10 +259,12 @@
           id: Date.now().toString(),
           name: newLibName.trim(),
           target: newLibTarget || '全身',
-          detail: newLibDetail.trim() || '無說明'
+          detail: newLibDetail.trim() || '無說明',
+          reps: newLibReps.trim() || '10次 × 2組'
         }]);
         setNewLibName('');
         setNewLibDetail('');
+        setNewLibReps('10次 × 2組');
         setShowAddLibModal(false);
       };
 
@@ -348,7 +370,8 @@
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
                   <label className="text-xs font-semibold text-gray-300">加強部位 (可多選)</label>
                   <div className="flex gap-2 flex-wrap">
-                    {['肩', '背', '腰', '胯', '屁股', '大腿'].map(t => {
+                    {/* 已將「胯」修正為「髖部」 */}
+                    {['肩', '背', '腰', '髖部', '屁股', '大腿'].map(t => {
                       const sel = selectedTargets.includes(t);
                       return (
                         <button key={t} onClick={() => setSelectedTargets(sel ? selectedTargets.filter(x=>x!==t) : [...selectedTargets, t])} className={`px-3 py-1.5 rounded-lg text-xs ${sel ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{t}</button>
@@ -357,8 +380,8 @@
                   </div>
                 </div>
 
-                <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm">
-                  {isGenerating ? '從動作庫抽取生成中...' : '✨ 從動作庫生成今日菜單'}
+                <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm disabled:opacity-50">
+                  {isGenerating ? '從動作庫抽取生成中...' : '✨ 生成今日約10分鐘菜單'}
                 </button>
 
                 {todayMenu.length > 0 && (
@@ -366,9 +389,9 @@
                     <h2 className="text-sm font-bold text-gray-300">今日菜單</h2>
                     {todayMenu.map((m, i) => (
                       <div key={i} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-start gap-3">
-                        <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4" />
+                        <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4 cursor-pointer" />
                         <div>
-                          <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} · {m.duration})</span></div>
+                          <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} · {m.reps || m.duration || '10次 × 2組'})</span></div>
                           <div className="text-xs text-gray-400 mt-1">{m.detail}</div>
                         </div>
                       </div>
@@ -385,7 +408,7 @@
             {activeTab === 'logs' && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <h2 className="font-bold text-sm text-white">運動打卡月曆</h2>
+                  <h2 className="font-bold text-sm text-white">運動打卡月曆 (香港時間)</h2>
                   <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
                     ＋ 手動補／編輯打卡
                   </button>
@@ -431,7 +454,7 @@
                   {dailyLogs[selectedDateKey] ? (
                     <div className="space-y-1 text-xs">
                       <div className="text-emerald-400 font-semibold">✔ 當天已完成運動</div>
-                      <div className="text-gray-300">⏱️ 總時長：{dailyLogs[selectedDateKey].totalMins} 分鐘</div>
+                      <div className="text-gray-300">⏱️ 大約總時長：{dailyLogs[selectedDateKey].totalMins} 分鐘</div>
                       <div className="text-gray-300">🔥 估計消耗：{dailyLogs[selectedDateKey].totalCal} kcal</div>
                       <div className="text-gray-300 mt-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800 leading-relaxed">
                         {dailyLogs[selectedDateKey].summary}
@@ -464,7 +487,7 @@
                     <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
                       <div className="space-y-1">
                         <div className="font-bold text-indigo-300 text-sm">
-                          {item.name} <span className="text-xs text-gray-400">({item.target})</span>
+                          {item.name} <span className="text-xs text-gray-400">({item.target} · {item.reps || item.duration || '10次 × 2組'})</span>
                         </div>
                         <div className="text-xs text-gray-400">{item.detail}</div>
                       </div>
@@ -504,7 +527,7 @@
                       <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
                         💡 助理為你推薦的新動作
                       </div>
-                      <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target})</span></div>
+                      <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target} · {suggestedAction.reps || '10次 × 2組'})</span></div>
                       <div className="text-xs text-gray-400">{suggestedAction.detail}</div>
                       <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 rounded-lg transition">
                         ＋ 直接加入動作庫
@@ -513,11 +536,12 @@
                   )}
 
                   {isChatLoading && <div className="text-xs text-gray-500">助理思考中...</div>}
+                  <div ref={chatEndRef} />
                 </div>
 
                 <div className="flex gap-2 pt-2 border-t border-slate-800">
                   <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="問問伸展動作，如：腰酸做什麼好？" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500" />
-                  <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold">發送</button>
+                  <button onClick={handleSendChat} disabled={isChatLoading} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold disabled:opacity-50">發送</button>
                 </div>
               </div>
             )}
@@ -536,7 +560,8 @@
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
                 <h3 className="font-bold text-white text-base">新增動作至動作庫</h3>
                 <input type="text" placeholder="動作名稱" value={newLibName} onChange={e => setNewLibName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
-                <input type="text" placeholder="部位（如：腰、背、肩）" value={newLibTarget} onChange={e => setNewLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                <input type="text" placeholder="部位（如：腰、背、髖部）" value={newLibTarget} onChange={e => setNewLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                <input type="text" placeholder="建議次數/組數（如：12次 × 2組）" value={newLibReps} onChange={e => setNewLibReps(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
                 <textarea placeholder="做法說明..." value={newLibDetail} onChange={e => setNewLibDetail(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" rows="3" />
                 <div className="flex gap-2">
                   <button onClick={() => setShowAddLibModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl text-xs">取消</button>
@@ -560,7 +585,7 @@
                   <input type="text" placeholder="例如：貓犬式伸展、仰臥抱膝" value={newLogSummary} onChange={e => setNewLogSummary(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
                 </div>
                 <div className="flex items-center gap-2 text-xs text-gray-300">
-                  <span>總時長：</span>
+                  <span>估計總時長：</span>
                   <input type="number" value={newLogMins} onChange={e => setNewLogMins(e.target.value)} className="w-20 bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
                   <span>分鐘</span>
                 </div>
