@@ -22,20 +22,22 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
-    // 工具函式：精準取得香港時區 (Asia/HongKong) 的 YYYY-MM-DD
     const getHongKongDateKey = (date = new Date()) => {
-      const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/HongKong',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      });
-      return formatter.format(date); // 格式為 YYYY-MM-DD
+      try {
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/HongKong',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        });
+        return formatter.format(date);
+      } catch (e) {
+        return date.toISOString().split('T')[0];
+      }
     };
 
     const DEFAULT_HEALTH_NOTE = "右腿曾經扭傷；有扁平足和足底筋膜炎，容易因腳踝、足底過度受力而不適（嚴禁墊腳尖、深蹲、跳躍）。睡床上舖，動作需溫和且安靜。";
 
-    // 預設動作庫改為「計次/組數」
     const DEFAULT_LIBRARY = [
       { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。放鬆脊椎。', reps: '10次 × 2組' },
       { id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上，雙手抱住雙膝拉向胸口，輕輕左右搖晃放鬆下背。', reps: '保持15秒 × 3次' },
@@ -51,50 +53,63 @@
       const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
       const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
       
+      // 加入 Try-Catch 防範舊資料導致黑屏
       const [library, setLibrary] = useState(() => {
-        const saved = localStorage.getItem('ex_library');
-        return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
+        try {
+          const saved = localStorage.getItem('ex_library');
+          return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
+        } catch (e) {
+          return DEFAULT_LIBRARY;
+        }
       });
 
       const [dailyLogs, setDailyLogs] = useState(() => {
-        const saved = localStorage.getItem('daily_logs');
-        return saved ? JSON.parse(saved) : {};
+        try {
+          const saved = localStorage.getItem('daily_logs');
+          return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+          return {};
+        }
       });
 
       const [todayCondition, setTodayCondition] = useState('一切正常');
       const [selectedTargets, setSelectedTargets] = useState([]);
-      const [duration, setDuration] = useState('10'); // 控制在 10 分鐘左右
+      const [duration, setDuration] = useState('10');
       const [todayMenu, setTodayMenu] = useState(() => {
-        const saved = localStorage.getItem('today_menu');
-        return saved ? JSON.parse(saved) : [];
+        try {
+          const saved = localStorage.getItem('today_menu');
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+          return [];
+        }
       });
       const [checkedMenu, setCheckedMenu] = useState({});
       const [isGenerating, setIsGenerating] = useState(false);
 
-      // 動作庫 Modal
       const [showAddLibModal, setShowAddLibModal] = useState(false);
       const [newLibName, setNewLibName] = useState('');
       const [newLibTarget, setNewLibTarget] = useState('全身');
       const [newLibDetail, setNewLibDetail] = useState('');
       const [newLibReps, setNewLibReps] = useState('10次 × 2組');
 
-      // 手動紀錄 / 編輯 Modal
       const [showAddLogModal, setShowAddLogModal] = useState(false);
       const [newLogDate, setNewLogDate] = useState(() => getHongKongDateKey());
       const [newLogSummary, setNewLogSummary] = useState('');
       const [newLogMins, setNewLogMins] = useState('10');
 
-      // AI 對話
       const [chatMessages, setChatMessages] = useState(() => {
-        const saved = localStorage.getItem('chat_messages');
-        return saved ? JSON.parse(saved) : [{ role: 'model', text: '嗨！我是你的睡前健身助理。想聊聊什麼伸展動作嗎？' }];
+        try {
+          const saved = localStorage.getItem('chat_messages');
+          return saved ? JSON.parse(saved) : [{ role: 'model', text: '嗨！我是你的睡前健身助理。想聊聊什麼伸展動作嗎？' }];
+        } catch (e) {
+          return [{ role: 'model', text: '嗨！我是你的睡前健身助理。想聊聊什麼伸展動作嗎？' }];
+        }
       });
       const [chatInput, setChatInput] = useState('');
       const [isChatLoading, setIsChatLoading] = useState(false);
       const [suggestedAction, setSuggestedAction] = useState(null);
       const chatEndRef = useRef(null);
 
-      // 月曆檢視（採用香港時區計算目前年月）
       const hkNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/HongKong" }));
       const [currentYear, setCurrentYear] = useState(hkNow.getFullYear());
       const [currentMonth, setCurrentMonth] = useState(hkNow.getMonth());
@@ -124,6 +139,7 @@
         if (proxyUrl.trim()) {
           baseUrl = proxyUrl.trim().replace(/\/$/, "");
         }
+        // 使用高效能且 Token 消耗較低的 gemini-1.5-flash
         const url = `${baseUrl}/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
         const res = await fetch(url, {
@@ -135,7 +151,10 @@
           })
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error?.message || 'API 呼叫失敗');
+        if (!res.ok) {
+          if (res.status === 429) throw new Error('API Token 用盡或請求太頻繁 (Quota Exceeded)，請稍後再試或更換 API Key');
+          throw new Error(data.error?.message || 'API 呼叫失敗');
+        }
         return data.candidates[0].content.parts[0].text;
       };
 
@@ -170,8 +189,7 @@
         }
         const todayKey = getHongKongDateKey();
         const completedNames = completed.map(c => c.name).join('、');
-        // 大約抓 10 分鐘左右或按完成比例計算
-        const mins = Math.max(5, Math.round((completed.length / todayMenu.length) * parseInt(duration)));
+        const mins = Math.max(5, Math.round((completed.length / (todayMenu.length || 1)) * parseInt(duration)));
         const cal = Math.round(mins * 3.5);
 
         const existing = dailyLogs[todayKey] || { totalMins: 0, totalCal: 0, summary: '' };
@@ -350,7 +368,6 @@
           </header>
 
           <main className="p-4 flex-1 space-y-4">
-            {/* TAB 1: 今日菜單 */}
             {activeTab === 'today' && (
               <div className="space-y-4">
                 <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 text-xs">
@@ -370,7 +387,6 @@
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
                   <label className="text-xs font-semibold text-gray-300">加強部位 (可多選)</label>
                   <div className="flex gap-2 flex-wrap">
-                    {/* 已將「胯」修正為「髖部」 */}
                     {['肩', '背', '腰', '髖部', '屁股', '大腿'].map(t => {
                       const sel = selectedTargets.includes(t);
                       return (
@@ -384,7 +400,7 @@
                   {isGenerating ? '從動作庫抽取生成中...' : '✨ 生成今日約10分鐘菜單'}
                 </button>
 
-                {todayMenu.length > 0 && (
+                {todayMenu && todayMenu.length > 0 && (
                   <div className="space-y-3 pt-2">
                     <h2 className="text-sm font-bold text-gray-300">今日菜單</h2>
                     {todayMenu.map((m, i) => (
@@ -404,7 +420,6 @@
               </div>
             )}
 
-            {/* TAB 2: 運動月曆記錄 */}
             {activeTab === 'logs' && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
@@ -472,7 +487,6 @@
               </div>
             )}
 
-            {/* TAB 3: 動作庫 */}
             {activeTab === 'library' && (
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
@@ -500,7 +514,6 @@
               </div>
             )}
 
-            {/* TAB 4: 問助理 */}
             {activeTab === 'chat' && (
               <div className="flex flex-col h-[65vh]">
                 <div className="flex justify-between items-center pb-2 border-b border-slate-800">
@@ -521,7 +534,6 @@
                     </div>
                   ))}
 
-                  {/* AI 推薦加入動作庫區塊 */}
                   {suggestedAction && (
                     <div className="bg-slate-900 border border-amber-500/50 p-3 rounded-xl space-y-2 shadow-lg">
                       <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
@@ -554,7 +566,6 @@
             <button onClick={() => setActiveTab('chat')} className={activeTab === 'chat' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>問助理</button>
           </nav>
 
-          {/* Modal: 手動新增動作庫 */}
           {showAddLibModal && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
@@ -571,7 +582,6 @@
             </div>
           )}
 
-          {/* Modal: 手動補 / 編輯打卡紀錄 */}
           {showAddLogModal && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
@@ -597,7 +607,6 @@
             </div>
           )}
 
-          {/* Modal: API Key & Proxy 設定 */}
           {showKeyModal && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
