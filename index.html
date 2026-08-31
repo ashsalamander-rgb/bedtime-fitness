@@ -29,4 +29,783 @@
           },
           fontFamily: {
             serif: ['Fraunces', 'serif'],
-            sans:
+            sans: ['Karla', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide-react@0.263.1/dist/umd/lucide-react.min.js"></script>
+
+  <style>
+    body {
+      font-family: 'Karla', sans-serif;
+      background-color: #0B0F19;
+      color: #E5E7EB;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .font-serif { font-family: 'Fraunces', serif; }
+  </style>
+</head>
+<body class="bg-night-900 text-gray-200 min-h-screen flex flex-col justify-between selection:bg-night-accent selection:text-white">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const { Moon, Calendar, BookOpen, MessageSquare, Settings, Check, Plus, Trash2, ChevronDown, ChevronUp, AlertCircle, Sparkles, Send, RefreshCw, Download, Upload, ShieldAlert } = lucide;
+
+    // --- 預設資料 ---
+    const DEFAULT_HEALTH_NOTE = "右腿曾經扭傷；有扁平足和足底筋膜炎，容易因腳踝、足底過度受力或承重而不適（嚴禁墊腳尖、深蹲、跳躍、長時間單腳站立）。睡床上舖，天花板低，動作需溫和且安靜。";
+
+    const DEFAULT_LIBRARY = [
+      { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。動作溫和，放鬆脊椎。' },
+      { id: '2', name: '仰臥抱膝親膝', target: '腰', detail: '平躺於床上，雙手抱住雙膝拉向胸口，輕輕左右搖晃放鬆下背。' },
+      { id: '3', name: '臥姿橋式', target: '屁股', detail: '平躺膝蓋彎曲，雙腳平貼床面，吸氣用臀部發力將髖部抬起，注意足底平貼不墊腳。' },
+      { id: '4', name: '仰臥腿後側伸展', target: '大腿', detail: '平躺，單腿抬高，雙手扣住大腿後側輕拉，保持腳踝放鬆，不拉傷足底筋膜。' },
+      { id: '5', name: '睡蓮式肩膀開展', target: '肩', detail: '側臥於床上，雙手前伸重疊，上方手臂如開書般向後打開，視線跟隨手掌。' }
+    ];
+
+    // --- 輔助函式：文字相似度比對（查重）---
+    const isSimilarName = (name1, name2) => {
+      const clean = str => str.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').toLowerCase();
+      const c1 = clean(name1);
+      const c2 = clean(name2);
+      if (!c1 || !c2) return false;
+      return c1.includes(c2) || c2.includes(c1);
+    };
+
+    function App() {
+      // --- State ---
+      const [activeTab, setActiveTab] = useState('today');
+      const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+      const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
+      const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
+      
+      // 資料庫 State
+      const [library, setLibrary] = useState(() => {
+        const saved = localStorage.getItem('ex_library');
+        return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
+      });
+      const [logs, setLogs] = useState(() => {
+        const saved = localStorage.getItem('ex_logs');
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      // Today 分頁 State
+      const [showHealthEdit, setShowHealthEdit] = useState(false);
+      const [todayCondition, setTodayCondition] = useState('一切正常');
+      const [customCondition, setCustomCondition] = useState('');
+      const [selectedTargets, setSelectedTargets] = useState([]);
+      const [duration, setDuration] = useState('10');
+      const [todayMenu, setTodayMenu] = useState(() => {
+        const saved = localStorage.getItem('today_menu');
+        return saved ? JSON.parse(saved) : [];
+      });
+      const [checkedMenu, setCheckedMenu] = useState({});
+      const [isGenerating, setIsGenerating] = useState(false);
+
+      // Chat 分頁 State
+      const [chatMessages, setChatMessages] = useState(() => {
+        const saved = localStorage.getItem('chat_messages');
+        return saved ? JSON.parse(saved) : [{ role: 'model', parts: [{ text: '嗨！我是你的睡前健身助理。今天身體感覺怎麼樣？想做些什麼伸展呢？' }] }];
+      });
+      const [chatInput, setChatInput] = useState('');
+      const [isChatLoading, setIsChatLoading] = useState(false);
+
+      // 查重 Dialog State
+      const [duplicateModal, setDuplicateModal] = useState({ open: false, newAction: null, existingAction: null, onConfirm: null });
+
+      // 持久化保存
+      useEffect(() => { localStorage.setItem('gemini_api_key', apiKey); }, [apiKey]);
+      useEffect(() => { localStorage.setItem('health_note', healthNote); }, [healthNote]);
+      useEffect(() => { localStorage.setItem('ex_library', JSON.stringify(library)); }, [library]);
+      useEffect(() => { localStorage.setItem('ex_logs', JSON.stringify(logs)); }, [logs]);
+      useEffect(() => { localStorage.setItem('today_menu', JSON.stringify(todayMenu)); }, [todayMenu]);
+      useEffect(() => { localStorage.setItem('chat_messages', JSON.stringify(chatMessages)); }, [chatMessages]);
+
+      // --- Gemini API 呼叫通用函式 ---
+      const callGemini = async (prompt, systemInstruction = '', responseSchema = null) => {
+        if (!apiKey) {
+          setShowKeyModal(true);
+          throw new Error('請先設定 Gemini API Key');
+        }
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        
+        const payload = {
+          contents: Array.isArray(prompt) ? prompt : [{ parts: [{ text: prompt }] }],
+          systemInstruction: {
+            parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者健康狀況與限制：${healthNote}。請始終遵守床上手術與安全限制。 ${systemInstruction}` }]
+          }
+        };
+
+        if (responseSchema) {
+          payload.generationConfig = {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema
+          };
+        }
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error?.message || 'Gemini API 呼叫失敗，請檢查 API Key 是否正確。');
+        }
+
+        const data = await res.json();
+        return data.candidates[0].content.parts[0].text;
+      };
+
+      // --- 動作庫查重邏輯 ---
+      const handleAddToActionLibrary = (actionData) => {
+        const existing = library.find(item => isSimilarName(item.name, actionData.name));
+        
+        if (existing) {
+          setDuplicateModal({
+            open: true,
+            newAction: actionData,
+            existingAction: existing,
+            onConfirm: (choice) => {
+              if (choice === 'update') {
+                setLibrary(prev => prev.map(item => item.id === existing.id ? { ...item, ...actionData } : item));
+              } else if (choice === 'add') {
+                setLibrary(prev => [...prev, { ...actionData, id: Date.now().toString() }]);
+              }
+              setDuplicateModal({ open: false, newAction: null, existingAction: null, onConfirm: null });
+            }
+          });
+        } else {
+          setLibrary(prev => [...prev, { ...actionData, id: Date.now().toString() }]);
+        }
+      };
+
+      // --- 產生今日菜單 ---
+      const generateMenu = async () => {
+        setIsGenerating(true);
+        try {
+          const conditionText = todayCondition === '其他狀況' ? customCondition : todayCondition;
+          const targetText = selectedTargets.length > 0 ? selectedTargets.join('、') : '請由 AI 根據輪替自動安排';
+          const recentLogs = logs.slice(0, 5).map(l => l.name).join('、');
+
+          const prompt = `今天身體狀況：${conditionText}\n想加強部位：${targetText}\n預計時長：${duration}分鐘\n最近做過的動作記錄：${recentLogs}\n現有動作庫清單：${library.map(l => l.name).join('、')}`;
+
+          const schema = {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                name: { type: "STRING" },
+                target: { type: "STRING" },
+                detail: { type: "STRING" },
+                duration: { type: "STRING" }
+              },
+              required: ["name", "target", "detail", "duration"]
+            }
+          };
+
+          const resultText = await callGemini(prompt, "請產生一份適合今天的睡前菜單。每個動作約耗時 2 分鐘，請依據總時長決定動作數量。避免任何腿部過度負擔動作。", schema);
+          const menuData = JSON.parse(resultText);
+          setTodayMenu(menuData);
+          setCheckedMenu({});
+        } catch (err) {
+          alert("產生菜單失敗: " + err.message);
+        } finally {
+          setIsGenerating(false);
+        }
+      };
+
+      // 改用固定基礎菜單
+      const loadFixedMenu = () => {
+        const fixed = library.slice(0, 5).map(item => ({
+          name: item.name,
+          target: item.target,
+          detail: item.detail,
+          duration: '2分鐘'
+        }));
+        setTodayMenu(fixed);
+        setCheckedMenu({});
+      };
+
+      // 記錄完成動作
+      const logCompletedMenu = () => {
+        const completed = todayMenu.filter((_, idx) => checkedMenu[idx]);
+        if (completed.length === 0) {
+          alert('請先勾選今天已完成的動作！');
+          return;
+        }
+        const newLogEntries = completed.map(item => ({
+          id: Date.now().toString() + Math.random(),
+          date: new Date().toLocaleDateString('zh-TW'),
+          name: item.name,
+          source: '睡前運動',
+          note: `部位: ${item.target} | ${item.duration}`
+        }));
+        setLogs(prev => [...newLogEntries, ...prev]);
+        alert(`已成功記錄 ${completed.length} 個完成動作！`);
+      };
+
+      // --- 聊天功能 ---
+      const handleSendChat = async () => {
+        if (!chatInput.trim() || isChatLoading) return;
+        
+        const userMsg = { role: 'user', parts: [{ text: chatInput }] };
+        const updatedHistory = [...chatMessages, userMsg];
+        setChatMessages(updatedHistory);
+        setChatInput('');
+        setIsChatLoading(true);
+
+        try {
+          const recentContext = updatedHistory.slice(-16).map(m => ({
+            role: m.role,
+            parts: m.parts
+          }));
+
+          const contextPrompt = `
+當前系統狀態：
+- 今日菜單：${JSON.stringify(todayMenu)}
+- 今日狀況：${todayCondition} ${customCondition}
+- 現有動作庫全清單：${library.map(l => l.name).join('、')}
+
+若使用者表達想將某個動作加入動作庫，請在給予親切說明的同時，於回覆內容的最末端附帶如下 JSON 區塊（請確保格式完全正確）：
+\`\`\`json
+{
+  "action": "suggest_add",
+  "data": {
+    "name": "動作名稱",
+    "target": "主要部位",
+    "detail": "做法說明"
+  }
+}
+\`\`\`
+          `;
+
+          const resultText = await callGemini(recentContext, contextPrompt);
+          setChatMessages(prev => [...prev, { role: 'model', parts: [{ text: resultText }] }]);
+        } catch (err) {
+          alert('對話失敗: ' + err.message);
+        } finally {
+          setIsChatLoading(false);
+        }
+      };
+
+      // --- 匯出 / 匯入資料 ---
+      const exportData = () => {
+        const data = { healthNote, library, logs, todayMenu };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `bedtime_fitness_backup_${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+      };
+
+      const importData = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          try {
+            const data = JSON.parse(evt.target.result);
+            if (data.healthNote) setHealthNote(data.healthNote);
+            if (data.library) setLibrary(data.library);
+            if (data.logs) setLogs(data.logs);
+            if (data.todayMenu) setTodayMenu(data.todayMenu);
+            alert('備份資料匯入成功！');
+          } catch (err) {
+            alert('匯入失敗，JSON 格式無效。');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      return (
+        <div className="max-w-md mx-auto min-h-screen flex flex-col bg-night-900 border-x border-night-700 pb-20">
+          
+          {/* Header */}
+          <header className="p-4 bg-night-800/80 backdrop-blur sticky top-0 z-10 border-b border-night-700 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <Moon className="w-6 h-6 text-night-accent"/>
+              <h1 className="font-serif text-xl font-bold tracking-wide text-white">睡前健身助理</h1>
+            </div>
+            <button onClick={() => setShowKeyModal(true)} className="p-2 text-gray-400 hover:text-white rounded-lg bg-night-700/50">
+              <Settings className="w-5 h-5"/>
+            </button>
+          </header>
+
+          {/* Main Content Areas */}
+          <main className="flex-1 p-4 space-y-4">
+
+            {/* TAB 1: 今日菜單 */}
+            {activeTab === 'today' && (
+              <div className="space-y-4">
+                
+                {/* 長期健康狀況 (可收合) */}
+                <div className="bg-night-card border border-night-700 rounded-xl p-3 text-sm">
+                  <div className="flex justify-between items-center cursor-pointer" onClick={() => setShowHealthEdit(!showHealthEdit)}>
+                    <div className="flex items-center gap-2 text-night-gold font-medium">
+                      <ShieldAlert className="w-4 h-4"/>
+                      <span>我的身體狀況（長期背景資訊）</span>
+                    </div>
+                    {showHealthEdit ? <ChevronUp className="w-4 h-4"/> : <ChevronDown className="w-4 h-4"/>}
+                  </div>
+                  
+                  {showHealthEdit ? (
+                    <div className="mt-3 space-y-2">
+                      <textarea
+                        value={healthNote}
+                        onChange={(e) => setHealthNote(e.target.value)}
+                        className="w-full bg-night-900 border border-night-600 rounded-lg p-2 text-xs text-gray-200 focus:outline-none focus:border-night-accent"
+                        rows="4"
+                      />
+                      <div className="text-xs text-gray-400">此內容會在每次呼叫 AI 時作為背景避開禁忌動作。</div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-gray-400 line-clamp-2">{healthNote}</p>
+                  )}
+                </div>
+
+                {/* 今天身體狀況 */}
+                <div className="bg-night-card border border-night-700 rounded-xl p-4 space-y-3">
+                  <label className="block text-sm font-semibold text-gray-300">今天身體狀況</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['一切正常', '生理期', '腿痛', '很累/沒力', '其他狀況'].map((cond) => (
+                      <button
+                        key={cond}
+                        onClick={() => setTodayCondition(cond)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                          todayCondition === cond 
+                            ? 'bg-night-accent text-white' 
+                            : 'bg-night-800 text-gray-400 border border-night-700'
+                        }`}
+                      >
+                        {cond}
+                      </button>
+                    ))}
+                  </div>
+                  {todayCondition === '其他狀況' && (
+                    <input
+                      type="text"
+                      placeholder="請輸入今天特殊的身體狀況..."
+                      value={customCondition}
+                      onChange={(e) => setCustomCondition(e.target.value)}
+                      className="w-full mt-2 bg-night-900 border border-night-600 rounded-lg p-2 text-xs focus:outline-none focus:border-night-accent"
+                    />
+                  )}
+                </div>
+
+                {/* 想加強部位 (複選) */}
+                <div className="bg-night-card border border-night-700 rounded-xl p-4 space-y-3">
+                  <label className="block text-sm font-semibold text-gray-300">想加強的部位（可複選，不選則自動輪替）</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['肩', '背', '腰', '胯', '屁股', '大腿'].map((target) => {
+                      const isSelected = selectedTargets.includes(target);
+                      return (
+                        <button
+                          key={target}
+                          onClick={() => {
+                            if (isSelected) setSelectedTargets(selectedTargets.filter(t => t !== target));
+                            else setSelectedTargets([...selectedTargets, target]);
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                            isSelected 
+                              ? 'bg-indigo-600 text-white' 
+                              : 'bg-night-800 text-gray-400 border border-night-700'
+                          }`}
+                        >
+                          {target}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 時長選擇 */}
+                <div className="bg-night-card border border-night-700 rounded-xl p-4 space-y-3">
+                  <label className="block text-sm font-semibold text-gray-300">今天想做多久</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {['10', '15', '20', '30'].map((mins) => (
+                      <button
+                        key={mins}
+                        onClick={() => setDuration(mins)}
+                        className={`py-2 rounded-lg text-xs font-medium border text-center transition ${
+                          duration === mins
+                            ? 'bg-night-accent border-night-accent text-white'
+                            : 'bg-night-800 border-night-700 text-gray-400'
+                        }`}
+                      >
+                        {mins} 分鐘
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 按鈕組 */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={generateMenu}
+                    disabled={isGenerating}
+                    className="flex-1 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition disabled:opacity-50"
+                  >
+                    {isGenerating ? <RefreshCw className="w-4 h-4 animate-spin"/> : <Sparkles className="w-4 h-4"/>}
+                    <span>{isGenerating ? 'AI 生成中...' : '產生今日菜單'}</span>
+                  </button>
+                  <button
+                    onClick={loadFixedMenu}
+                    title="離線或失敗時使用預設菜單"
+                    className="px-3 bg-night-800 border border-night-700 hover:bg-night-700 rounded-xl text-xs text-gray-300"
+                  >
+                    固定菜單
+                  </button>
+                </div>
+
+                {/* 菜單列表 */}
+                {todayMenu.length > 0 && (
+                  <div className="space-y-3 pt-2">
+                    <h2 className="font-serif text-lg font-semibold text-gray-200">今日睡前菜單</h2>
+                    {todayMenu.map((item, idx) => {
+                      const inLibrary = library.some(l => isSimilarName(l.name, item.name));
+                      return (
+                        <div key={idx} className="bg-night-card border border-night-700 rounded-xl p-3 flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={!!checkedMenu[idx]}
+                            onChange={(e) => setCheckedMenu({ ...checkedMenu, [idx]: e.target.checked })}
+                            className="mt-1 w-5 h-5 rounded border-night-600 text-night-accent focus:ring-0 bg-night-900"
+                          />
+                          <div className="flex-1">
+                            <div className="flex justify-between items-center">
+                              <span className="font-semibold text-white">{item.name}</span>
+                              <span className="text-xs bg-night-800 border border-night-700 px-2 py-0.5 rounded text-night-accent">{item.target} · {item.duration}</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1">{item.detail}</p>
+                          </div>
+                          {!inLibrary && (
+                            <button
+                              onClick={() => handleAddToActionLibrary({ name: item.name, target: item.target, detail: item.detail })}
+                              className="text-xs bg-night-800 hover:bg-night-700 border border-night-600 px-2 py-1 rounded text-night-gold whitespace-nowrap flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3"/> 庫
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <button
+                      onClick={logCompletedMenu}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm transition"
+                    >
+                      <Check className="w-4 h-4"/> 記錄今天完成的動作
+                    </button>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* TAB 2: 記錄 (Log) */}
+            {activeTab === 'log' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-serif text-lg font-semibold">運動記錄</h2>
+                  <button
+                    onClick={() => {
+                      const name = prompt('請輸入運動名稱：');
+                      if (name) {
+                        setLogs(prev => [{
+                          id: Date.now().toString(),
+                          date: new Date().toLocaleDateString('zh-TW'),
+                          name,
+                          source: '自行輸入',
+                          note: '手動新增'
+                        }, ...prev]);
+                      }
+                    }}
+                    className="text-xs bg-night-800 hover:bg-night-700 border border-night-700 px-3 py-1.5 rounded-lg flex items-center gap-1 text-night-accent"
+                  >
+                    <Plus className="w-4 h-4"/> 手動新增
+                  </button>
+                </div>
+
+                {logs.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 text-sm">尚無任何運動記錄。</div>
+                ) : (
+                  <div className="space-y-2">
+                    {logs.map(log => (
+                      <div key={log.id} className="bg-night-card border border-night-700 rounded-xl p-3 flex justify-between items-center">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-white">{log.name}</span>
+                            <span className="text-[10px] bg-night-800 text-gray-400 px-1.5 py-0.5 rounded border border-night-700">{log.source}</span>
+                          </div>
+                          <div className="text-xs text-gray-400 mt-0.5">{log.date} · {log.note}</div>
+                        </div>
+                        <button
+                          onClick={() => setLogs(logs.filter(l => l.id !== log.id))}
+                          className="text-gray-500 hover:text-red-400 p-1"
+                        >
+                          <Trash2 className="w-4 h-4"/>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: 動作庫 (Library) */}
+            {activeTab === 'library' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-serif text-lg font-semibold">動作庫 ({library.length})</h2>
+                  <button
+                    onClick={() => {
+                      const name = prompt('動作名稱：');
+                      if (!name) return;
+                      const target = prompt('主要練什麼（例如：肩、背、腰）：') || '全身';
+                      const detail = prompt('做法說明：') || '';
+                      handleAddToActionLibrary({ name, target, detail });
+                    }}
+                    className="text-xs bg-night-accent hover:bg-night-accentHover px-3 py-1.5 rounded-lg text-white flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4"/> 新增動作
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {library.map(item => (
+                    <div key={item.id} className="bg-night-card border border-night-700 rounded-xl p-4 space-y-2">
+                      <div className="flex justify-between items-start">
+                        <h3 className="font-bold text-white text-base">{item.name}</h3>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs bg-indigo-950 text-indigo-300 border border-indigo-800 px-2 py-0.5 rounded-full">{item.target}</span>
+                          <button
+                            onClick={() => setLibrary(library.filter(l => l.id !== item.id))}
+                            className="text-gray-500 hover:text-red-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5"/>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-300 leading-relaxed">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 4: 問助理 (Chat) */}
+            {activeTab === 'chat' && (
+              <div className="flex flex-col h-[calc(100vh-140px)]">
+                <div className="flex justify-between items-center pb-2 border-b border-night-700">
+                  <span className="text-xs text-gray-400">上下文保留最近 16 則對話</span>
+                  <button
+                    onClick={() => {
+                      if (confirm('確定要清空對話紀錄嗎？')) {
+                        setChatMessages([{ role: 'model', parts: [{ text: '對話已清空！有什麼我可以幫你的嗎？' }] }]);
+                      }
+                    }}
+                    className="text-xs text-gray-400 hover:text-white flex items-center gap-1"
+                  >
+                    <Trash2 className="w-3 h-3"/> 清空
+                  </button>
+                </div>
+
+                {/* 訊息列表 */}
+                <div className="flex-1 overflow-y-auto space-y-3 py-3">
+                  {chatMessages.map((msg, idx) => {
+                    const isModel = msg.role === 'model';
+                    let text = msg.parts[0].text;
+                    let suggestedAction = null;
+
+                    if (isModel && text.includes('```json')) {
+                      try {
+                        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+                        if (jsonMatch) {
+                          const parsed = JSON.parse(jsonMatch[1]);
+                          if (parsed.action === 'suggest_add') {
+                            suggestedAction = parsed.data;
+                            text = text.replace(/```json\s*[\s\S]*?\s*```/, '');
+                          }
+                        }
+                      } catch (e) {}
+                    }
+
+                    return (
+                      <div key={idx} className={`flex flex-col ${isModel ? 'items-start' : 'items-end'}`}>
+                        <div className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed ${
+                          isModel ? 'bg-night-card border border-night-700 text-gray-200' : 'bg-night-accent text-white'
+                        }`}>
+                          {text}
+                        </div>
+
+                        {suggestedAction && (
+                          <div className="mt-2 w-[85%] bg-night-800 border border-night-gold/50 rounded-xl p-3 text-xs space-y-2">
+                            <div className="font-semibold text-night-gold flex items-center gap-1">
+                              <Sparkles className="w-3.5 h-3.5" /> 建議加入動作庫
+                            </div>
+                            <div className="text-white font-medium">{suggestedAction.name} ({suggestedAction.target})</div>
+                            <div className="text-gray-400">{suggestedAction.detail}</div>
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                onClick={() => handleAddToActionLibrary(suggestedAction)}
+                                className="flex-1 bg-night-gold hover:bg-yellow-600 text-black font-semibold py-1 rounded"
+                              >
+                                加入動作庫
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {isChatLoading && (
+                    <div className="text-xs text-gray-500 italic">AI 正在思考中...</div>
+                  )}
+                </div>
+
+                {/* 對話輸入框 */}
+                <div className="flex gap-2 pt-2 border-t border-night-700">
+                  <input
+                    type="text"
+                    placeholder="問問助理，例如：「我想做放鬆腰部的動作」"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
+                    className="flex-1 bg-night-card border border-night-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-night-accent"
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    className="bg-night-accent hover:bg-night-accentHover text-white p-2.5 rounded-xl"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </main>
+
+          {/* 底部 Tab 導覽列 */}
+          <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-night-800/95 backdrop-blur border-t border-night-700 flex justify-around p-2 z-20">
+            {[
+              { id: 'today', label: '今日菜單', icon: Calendar },
+              { id: 'log', label: '記錄', icon: BookOpen },
+              { id: 'library', label: '動作庫', icon: Moon },
+              { id: 'chat', label: '問助理', icon: MessageSquare }
+            ].map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex flex-col items-center py-1 px-3 rounded-lg transition ${
+                    isActive ? 'text-night-accent font-semibold' : 'text-gray-400'
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span className="text-[10px] mt-1">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* API Key Modal */}
+          {showKeyModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-night-card border border-night-700 rounded-2xl p-5 max-w-sm w-full space-y-4">
+                <div className="flex items-center gap-2 text-night-accent">
+                  <Settings className="w-5 h-5" />
+                  <h3 className="font-bold text-lg text-white">設定 Gemini API Key</h3>
+                </div>
+                <p className="text-xs text-gray-300 leading-relaxed">
+                  本 App 完全於瀏覽器端運作。請輸入你的 Google Gemini API Key（可於 Google AI Studio 免費申請）。金鑰將安全儲存於你的手機本機。
+                </p>
+                <input
+                  type="password"
+                  placeholder="AIzaSy..."
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="w-full bg-night-900 border border-night-600 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-night-accent"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowKeyModal(false)}
+                    className="flex-1 bg-night-accent hover:bg-night-accentHover text-white py-2 rounded-xl text-xs font-semibold"
+                  >
+                    儲存並開始使用
+                  </button>
+                </div>
+                
+                {/* 備份 / 匯入區域 */}
+                <div className="pt-3 border-t border-night-700 space-y-2">
+                  <div className="text-xs font-semibold text-gray-400">資料備份與還原</div>
+                  <div className="flex gap-2">
+                    <button onClick={exportData} className="flex-1 bg-night-800 border border-night-700 py-1.5 rounded text-[11px] text-gray-300 flex items-center justify-center gap-1">
+                      <Download className="w-3 h-3" /> 匯出 JSON
+                    </button>
+                    <label className="flex-1 bg-night-800 border border-night-700 py-1.5 rounded text-[11px] text-gray-300 flex items-center justify-center gap-1 cursor-pointer">
+                      <Upload className="w-3 h-3" /> 匯入 JSON
+                      <input type="file" accept=".json" onChange={importData} className="hidden" />
+                    </label>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* 查重提示 Modal */}
+          {duplicateModal.open && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-night-card border border-night-gold/50 rounded-2xl p-5 max-w-sm w-full space-y-3">
+                <div className="flex items-center gap-2 text-night-gold font-bold">
+                  <AlertCircle className="w-5 h-5" />
+                  <span>動作庫已有類似動作</span>
+                </div>
+                <p className="text-xs text-gray-300">
+                  動作庫中已存在名稱相近的動作：「<strong className="text-white">{duplicateModal.existingAction?.name}</strong>」。你想如何處理？
+                </p>
+                <div className="space-y-2 pt-2">
+                  <button
+                    onClick={() => duplicateModal.onConfirm('update')}
+                    className="w-full bg-night-accent text-white py-2 rounded-xl text-xs font-semibold"
+                  >
+                    更新原本動作內容
+                  </button>
+                  <button
+                    onClick={() => duplicateModal.onConfirm('add')}
+                    className="w-full bg-night-800 border border-night-700 text-gray-200 py-2 rounded-xl text-xs"
+                  >
+                    仍新增為獨立新動作
+                  </button>
+                  <button
+                    onClick={() => setDuplicateModal({ open: false, newAction: null, existingAction: null, onConfirm: null })}
+                    className="w-full text-xs text-gray-500 py-1"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
