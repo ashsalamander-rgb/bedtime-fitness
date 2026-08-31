@@ -4,9 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>睡前健身助理</title>
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     body { background-color: #0B0F19; color: #E5E7EB; -webkit-tap-highlight-color: transparent; }
@@ -35,15 +38,19 @@
       const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
       const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
       
+      // 動作庫 State
       const [library, setLibrary] = useState(() => {
         const saved = localStorage.getItem('ex_library');
         return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
       });
+
+      // 運動紀錄 State
       const [logs, setLogs] = useState(() => {
         const saved = localStorage.getItem('ex_logs');
         return saved ? JSON.parse(saved) : [];
       });
 
+      // 今日菜單 State
       const [todayCondition, setTodayCondition] = useState('一切正常');
       const [selectedTargets, setSelectedTargets] = useState([]);
       const [duration, setDuration] = useState('10');
@@ -54,6 +61,18 @@
       const [checkedMenu, setCheckedMenu] = useState({});
       const [isGenerating, setIsGenerating] = useState(false);
 
+      // 手動新增動作庫 Modal State
+      const [showAddLibModal, setShowAddLibModal] = useState(false);
+      const [newLibName, setNewLibName] = useState('');
+      const [newLibTarget, setNewLibTarget] = useState('全身');
+      const [newLibDetail, setNewLibDetail] = useState('');
+
+      // 手動新增紀錄 Modal State
+      const [showAddLogModal, setShowAddLogModal] = useState(false);
+      const [newLogName, setNewLogName] = useState('');
+      const [newLogMins, setNewLogMins] = useState('10');
+
+      // AI 對話 State
       const [chatMessages, setChatMessages] = useState(() => {
         const saved = localStorage.getItem('chat_messages');
         return saved ? JSON.parse(saved) : [{ role: 'model', text: '嗨！我是你的睡前健身助理。今天想做什麼伸展呢？' }];
@@ -73,7 +92,7 @@
           setShowKeyModal(true);
           throw new Error('請先設定 Gemini API Key');
         }
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -104,6 +123,74 @@
         }
       };
 
+      // 儲存完成的今日菜單動作
+      const saveCheckedMenuLogs = () => {
+        const completed = todayMenu.filter((_, idx) => checkedMenu[idx]);
+        if (completed.length === 0) {
+          alert("請先勾選已完成的動作！");
+          return;
+        }
+        const nowStr = new Date().toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const newEntries = completed.map(item => {
+          const mins = parseInt(item.duration) || 2;
+          const cal = Math.round(mins * 3.5); // 睡前溫和伸展約 3.5 kcal/min
+          return {
+            id: Date.now().toString() + Math.random(),
+            date: nowStr,
+            name: item.name,
+            duration: `${mins} 分鐘`,
+            calories: `${cal} kcal`,
+            source: '今日菜單'
+          };
+        });
+        setLogs(prev => [...newEntries, ...prev]);
+        alert(`已成功記錄 ${completed.length} 個完成動作！`);
+      };
+
+      // 手動新增動作至動作庫
+      const handleAddLibrary = () => {
+        if (!newLibName.trim()) return;
+        const newItem = {
+          id: Date.now().toString(),
+          name: newLibName.trim(),
+          target: newLibTarget || '全身',
+          detail: newLibDetail.trim() || '無詳細說明'
+        };
+        setLibrary(prev => [...prev, newItem]);
+        setNewLibName('');
+        setNewLibDetail('');
+        setShowAddLibModal(false);
+      };
+
+      // 刪除動作庫項目
+      const handleDeleteLibrary = (id) => {
+        setLibrary(prev => prev.filter(item => item.id !== id));
+      };
+
+      // 手動新增運動紀錄
+      const handleAddLog = () => {
+        if (!newLogName.trim()) return;
+        const mins = parseInt(newLogMins) || 10;
+        const cal = Math.round(mins * 3.5);
+        const nowStr = new Date().toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const newLog = {
+          id: Date.now().toString(),
+          date: nowStr,
+          name: newLogName.trim(),
+          duration: `${mins} 分鐘`,
+          calories: `${cal} kcal`,
+          source: '手動輸入'
+        };
+        setLogs(prev => [newLog, ...prev]);
+        setNewLogName('');
+        setShowAddLogModal(false);
+      };
+
+      // 刪除運動紀錄
+      const handleDeleteLog = (id) => {
+        setLogs(prev => prev.filter(log => log.id !== id));
+      };
+
       const handleSendChat = async () => {
         if (!chatInput.trim() || isChatLoading) return;
         const newMsgs = [...chatMessages, { role: 'user', text: chatInput }];
@@ -128,6 +215,7 @@
           </header>
 
           <main className="p-4 flex-1 space-y-4">
+            {/* TAB 1: 今日菜單 */}
             {activeTab === 'today' && (
               <div className="space-y-4">
                 <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 text-xs">
@@ -161,15 +249,54 @@
                 </button>
 
                 {todayMenu.length > 0 && (
-                  <div className="space-y-2">
+                  <div className="space-y-3 pt-2">
                     <h2 className="text-sm font-bold text-gray-300">今日菜單</h2>
                     {todayMenu.map((m, i) => (
                       <div key={i} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-start gap-3">
-                        <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1" />
+                        <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4" />
                         <div>
                           <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} · {m.duration})</span></div>
                           <div className="text-xs text-gray-400 mt-1">{m.detail}</div>
                         </div>
+                      </div>
+                    ))}
+                    <button onClick={saveCheckedMenuLogs} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs">
+                      ✅ 記錄已勾選的運動至運動記錄
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: 運動記錄 */}
+            {activeTab === 'logs' && (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-sm text-white">運動記錄 ({logs.length})</h2>
+                  <button onClick={() => setShowAddLogModal(true)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
+                    ＋ 手動新增紀錄
+                  </button>
+                </div>
+
+                {logs.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 text-xs">目前尚無運動紀錄，快去完成今日菜單吧！</div>
+                ) : (
+                  <div className="space-y-2">
+                    {logs.map(log => (
+                      <div key={log.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                        <div className="space-y-1">
+                          <div className="font-bold text-sm text-white flex items-center gap-2">
+                            {log.name}
+                            <span className="text-[10px] bg-slate-800 text-indigo-300 px-1.5 py-0.5 rounded border border-slate-700">{log.source}</span>
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            ⏱️ {log.duration}  |  🔥 預估消耗 {log.calories}
+                          </div>
+                          <div className="text-[10px] text-gray-500">{log.date}</div>
+                        </div>
+                        <button onClick={() => handleDeleteLog(log.id)} className="text-gray-500 hover:text-red-400 text-xs p-1">
+                          ✕
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -177,18 +304,35 @@
               </div>
             )}
 
+            {/* TAB 3: 動作庫 */}
             {activeTab === 'library' && (
               <div className="space-y-3">
-                <h2 className="font-bold text-sm">動作庫 ({library.length})</h2>
-                {library.map(item => (
-                  <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                    <div className="font-bold text-indigo-300 text-sm">{item.name} <span className="text-xs text-gray-500">({item.target})</span></div>
-                    <div className="text-xs text-gray-400 mt-1">{item.detail}</div>
-                  </div>
-                ))}
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-sm text-white">動作庫 ({library.length})</h2>
+                  <button onClick={() => setShowAddLibModal(true)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
+                    ＋ 新增動作
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {library.map(item => (
+                    <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
+                      <div className="space-y-1">
+                        <div className="font-bold text-indigo-300 text-sm">
+                          {item.name} <span className="text-xs text-gray-400">({item.target})</span>
+                        </div>
+                        <div className="text-xs text-gray-400">{item.detail}</div>
+                      </div>
+                      <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 text-xs p-1">
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
+            {/* TAB 4: 問助理 */}
             {activeTab === 'chat' && (
               <div className="flex flex-col h-[65vh]">
                 <div className="flex-1 overflow-y-auto space-y-2 py-2">
@@ -209,12 +353,50 @@
             )}
           </main>
 
+          {/* 底部 Tab 導覽列 */}
           <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900 border-t border-slate-800 flex justify-around p-3 z-20 text-xs">
             <button onClick={() => setActiveTab('today')} className={activeTab === 'today' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>今日菜單</button>
+            <button onClick={() => setActiveTab('logs')} className={activeTab === 'logs' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>運動記錄</button>
             <button onClick={() => setActiveTab('library')} className={activeTab === 'library' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>動作庫</button>
             <button onClick={() => setActiveTab('chat')} className={activeTab === 'chat' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>問助理</button>
           </nav>
 
+          {/* Modal: 手動新增動作庫 */}
+          {showAddLibModal && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
+                <h3 className="font-bold text-white text-base">新增動作至動作庫</h3>
+                <input type="text" placeholder="動作名稱（如：嬰兒式放鬆）" value={newLibName} onChange={e => setNewLibName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                <input type="text" placeholder="主要部位（如：腰、背、肩）" value={newLibTarget} onChange={e => setNewLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                <textarea placeholder="動作說明與備註..." value={newLibDetail} onChange={e => setNewLibDetail(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" rows="3" />
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddLibModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl text-xs">取消</button>
+                  <button onClick={handleAddLibrary} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">確定新增</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: 手動新增運動紀錄 */}
+          {showAddLogModal && (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
+                <h3 className="font-bold text-white text-base">手動新增運動紀錄</h3>
+                <input type="text" placeholder="做了什麼運動？（如：睡前瑜珈）" value={newLogName} onChange={e => setNewLogName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                <div className="flex items-center gap-2 text-xs text-gray-300">
+                  <span>做了多久：</span>
+                  <input type="number" value={newLogMins} onChange={e => setNewLogMins(e.target.value)} className="w-20 bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+                  <span>分鐘</span>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddLogModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl text-xs">取消</button>
+                  <button onClick={handleAddLog} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">儲存紀錄</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: API Key 設定 */}
           {showKeyModal && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
@@ -224,6 +406,7 @@
               </div>
             </div>
           )}
+
         </div>
       );
     }
