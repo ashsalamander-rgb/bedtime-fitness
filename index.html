@@ -35,6 +35,11 @@ function App() {
   const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
   const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
   
+  // JSONBin 相關狀態
+  const [jsonBinMasterKey, setJsonBinMasterKey] = useState(() => localStorage.getItem('jsonbin_master_key') || '');
+  const [jsonBinId, setJsonBinId] = useState(() => localStorage.getItem('jsonbin_id') || '');
+  const [isSyncing, setIsSyncing] = useState(false);
+
   const [library, setLibrary] = useState(() => {
     const saved = localStorage.getItem('ex_library');
     return saved ? JSON.parse(saved) : DEFAULT_LIBRARY;
@@ -54,7 +59,7 @@ function App() {
   const [checkedMenu, setCheckedMenu] = useState({});
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // 動作庫 Modal (新增 / 編輯)
+  // 動作庫 Modal
   const [showLibModal, setShowLibModal] = useState(false);
   const [editingLibId, setEditingLibId] = useState(null);
   const [libName, setLibName] = useState('');
@@ -62,7 +67,7 @@ function App() {
   const [libDetail, setLibDetail] = useState('');
   const [libCount, setLibCount] = useState('10次');
 
-  // 手動紀錄 / 編輯 Modal
+  // 手動紀錄 Modal
   const [showAddLogModal, setShowAddLogModal] = useState(false);
   const [newLogDate, setNewLogDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [newLogSummary, setNewLogSummary] = useState('');
@@ -81,8 +86,6 @@ function App() {
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [selectedDateKey, setSelectedDateKey] = useState(new Date().toISOString().split('T')[0]);
 
-  const fileInputRef = useRef(null);
-
   useEffect(() => { localStorage.setItem('gemini_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('gemini_proxy_url', proxyUrl); }, [proxyUrl]);
   useEffect(() => { localStorage.setItem('health_note', healthNote); }, [healthNote]);
@@ -90,6 +93,8 @@ function App() {
   useEffect(() => { localStorage.setItem('daily_logs', JSON.stringify(dailyLogs)); }, [dailyLogs]);
   useEffect(() => { localStorage.setItem('today_menu', JSON.stringify(todayMenu)); }, [todayMenu]);
   useEffect(() => { localStorage.setItem('chat_messages', JSON.stringify(chatMessages)); }, [chatMessages]);
+  useEffect(() => { localStorage.setItem('jsonbin_master_key', jsonBinMasterKey); }, [jsonBinMasterKey]);
+  useEffect(() => { localStorage.setItem('jsonbin_id', jsonBinId); }, [jsonBinId]);
 
   const callGemini = async (promptText) => {
     if (!apiKey) {
@@ -292,53 +297,80 @@ function App() {
     setDailyLogs(newLogs);
   };
 
-  // JSON 跨裝置匯出與匯入
-  const handleExportJson = () => {
-    const backupData = {
-      healthNote,
-      library,
-      dailyLogs,
-      chatMessages,
-      exportDate: new Date().toISOString()
-    };
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `bedtime_fitness_backup_${new Date().toISOString().split('T')[0]}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  // JSONBin 雲端上載 (Save to Cloud)
+  const handleUploadToJsonBin = async () => {
+    if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
+      alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const payload = {
+        healthNote,
+        library,
+        dailyLogs,
+        chatMessages,
+        updateTime: new Date().toISOString()
+      };
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${jsonBinId.trim()}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': jsonBinMasterKey.trim()
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('上載至雲端失敗');
+      alert("成功上載資料至 JSONBin 雲端！");
+    } catch (err) {
+      alert("上載失敗: " + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const handleImportJson = (e) => {
-    const fileReader = new FileReader();
-    if (e.target.files && e.target.files[0]) {
-      fileReader.readAsText(e.target.files[0], "UTF-8");
-      fileReader.onload = (event) => {
-        try {
-          const parsed = JSON.parse(event.target.result);
-          if (parsed.library) {
-            setLibrary(parsed.library);
-            localStorage.setItem('ex_library', JSON.stringify(parsed.library));
-          }
-          if (parsed.dailyLogs) {
-            setDailyLogs(parsed.dailyLogs);
-            localStorage.setItem('daily_logs', JSON.stringify(parsed.dailyLogs));
-          }
-          if (parsed.healthNote) {
-            setHealthNote(parsed.healthNote);
-            localStorage.setItem('health_note', parsed.healthNote);
-          }
-          if (parsed.chatMessages) {
-            setChatMessages(parsed.chatMessages);
-            localStorage.setItem('chat_messages', JSON.stringify(parsed.chatMessages));
-          }
-          alert("資料匯入成功！");
-          setShowKeyModal(false);
-        } catch (err) {
-          alert("匯入失敗：JSON 格式錯誤或檔案損毀。");
+  // JSONBin 雲端下載 (Load from Cloud)
+  const handleDownloadFromJsonBin = async () => {
+    if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
+      alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
+      return;
+    }
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${jsonBinId.trim()}/latest`, {
+        method: 'GET',
+        headers: {
+          'X-Master-Key': jsonBinMasterKey.trim()
         }
-      };
+      });
+      if (!res.ok) throw new Error('從雲端下載失敗');
+      const data = await res.json();
+      const record = data.record;
+
+      if (record) {
+        if (record.library) {
+          setLibrary(record.library);
+          localStorage.setItem('ex_library', JSON.stringify(record.library));
+        }
+        if (record.dailyLogs) {
+          setDailyLogs(record.dailyLogs);
+          localStorage.setItem('daily_logs', JSON.stringify(record.dailyLogs));
+        }
+        if (record.healthNote) {
+          setHealthNote(record.healthNote);
+          localStorage.setItem('health_note', record.healthNote);
+        }
+        if (record.chatMessages) {
+          setChatMessages(record.chatMessages);
+          localStorage.setItem('chat_messages', JSON.stringify(record.chatMessages));
+        }
+        alert("已成功從 JSONBin 下載並同步資料！");
+        setShowKeyModal(false);
+      }
+    } catch (err) {
+      alert("下載失敗: " + err.message);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -377,7 +409,7 @@ function App() {
     <div className="max-w-md mx-auto min-h-screen flex flex-col bg-slate-950 pb-20">
       <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-lg font-bold text-indigo-400">🌙 睡前健身助理</h1>
-        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與備份設定</button>
+        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與雲端同步</button>
       </header>
 
       <main className="p-4 flex-1 space-y-4">
@@ -615,11 +647,11 @@ function App() {
         </div>
       )}
 
-      {/* Modal: API Key & 跨裝置 JSON 備份設定 */}
+      {/* Modal: API Key & JSONBin 雲端同步設定 */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-4">
-            <h3 className="font-bold text-white text-base">設定與跨裝置備份</h3>
+            <h3 className="font-bold text-white text-base">設定與 JSONBin 雲端同步</h3>
             <div>
               <label className="text-[10px] text-gray-400">Gemini API Key</label>
               <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
@@ -630,15 +662,22 @@ function App() {
             </div>
             
             <div className="border-t border-slate-800 pt-3 space-y-2">
-              <label className="text-[10px] text-indigo-400 font-bold block">📦 跨裝置資料同步 (JSON)</label>
-              <div className="flex gap-2">
-                <button onClick={handleExportJson} className="flex-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
-                  📥 下載備份 (.json)
+              <label className="text-[10px] text-indigo-400 font-bold block">☁️ JSONBin.io 跨裝置同步</label>
+              <div>
+                <label className="text-[10px] text-gray-400">Master Key ($2$x...)</label>
+                <input type="password" value={jsonBinMasterKey} onChange={e => setJsonBinMasterKey(e.target.value)} placeholder="輸入 Master Key" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-400">Bin ID</label>
+                <input type="text" value={jsonBinId} onChange={e => setJsonBinId(e.target.value)} placeholder="輸入 Bin ID" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={handleUploadToJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                  {isSyncing ? '同步中...' : '☁️ 上載至雲端'}
                 </button>
-                <button onClick={() => fileInputRef.current.click()} className="flex-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
-                  📤 上載還原
+                <button onClick={handleDownloadFromJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                  {isSyncing ? '同步中...' : '📥 從雲端下載'}
                 </button>
-                <input type="file" ref={fileInputRef} onChange={handleImportJson} accept=".json" className="hidden" />
               </div>
             </div>
 
