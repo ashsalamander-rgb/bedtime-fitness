@@ -18,7 +18,7 @@ body { background-color: #0B0F19; color: #E5E7EB; -webkit-tap-highlight-color: t
 <body class="bg-slate-950 text-gray-200 min-h-screen">
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 const DEFAULT_HEALTH_NOTE = "右腿曾經扭傷；有扁平足和足底筋膜炎，容易因腳踝、足底過度受力而不適（嚴禁墊腳尖、深蹲、跳躍）。睡床上舖，動作需溫和且安靜。";
 const DEFAULT_LIBRARY = [
   { id: '1', name: '貓犬式伸展', target: '背', detail: '四足跪姿，吸氣拱背抬頭，吐氣圓背低頭。放鬆脊椎。', count: '10次' },
@@ -80,6 +80,8 @@ function App() {
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
   const [selectedDateKey, setSelectedDateKey] = useState(new Date().toISOString().split('T')[0]);
+
+  const fileInputRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('gemini_api_key', apiKey); }, [apiKey]);
   useEffect(() => { localStorage.setItem('gemini_proxy_url', proxyUrl); }, [proxyUrl]);
@@ -166,7 +168,7 @@ function App() {
       const prompt = `使用者訊息：${userText}
 說明：
 1. 請以最精簡俐落的語氣回答，禁止長篇大論與冗言贅字，直接列出重點與要點。
-2. 如果使用者「明確提及某個動作（如：我想做蚌式、幫我加蚌式）」或「你為其推薦了一個具體的伸展動作」，請嚴格在回答最末尾另起一行，附上以下 JSON 結構（注意：切勿使用 markdown 程式碼塊包裹）：
+2. 如果使用者「明確提及某個動作（如：我想做蚌式、幫我加蚌式）」或「你為其推薦了一個具體的伸展動作」，請嚴格在回答最末尾另起一份，附上以下 JSON 結構（注意：切勿使用 markdown 程式碼塊包裹）：
 {"action":{"name":"精確動作名稱","target":"部位（如：髖部/腰/背/肩）","detail":"動作要點說明（15~25字極簡說明）","count":"建議次數（如：每邊10次）"}}
 3. 如果使用者只是單純聊天、問候或沒有明確提及/推薦具體動作，請勿輸出上述 JSON。`;
 
@@ -290,6 +292,56 @@ function App() {
     setDailyLogs(newLogs);
   };
 
+  // JSON 跨裝置匯出與匯入
+  const handleExportJson = () => {
+    const backupData = {
+      healthNote,
+      library,
+      dailyLogs,
+      chatMessages,
+      exportDate: new Date().toISOString()
+    };
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `bedtime_fitness_backup_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  const handleImportJson = (e) => {
+    const fileReader = new FileReader();
+    if (e.target.files && e.target.files[0]) {
+      fileReader.readAsText(e.target.files[0], "UTF-8");
+      fileReader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          if (parsed.library) {
+            setLibrary(parsed.library);
+            localStorage.setItem('ex_library', JSON.stringify(parsed.library));
+          }
+          if (parsed.dailyLogs) {
+            setDailyLogs(parsed.dailyLogs);
+            localStorage.setItem('daily_logs', JSON.stringify(parsed.dailyLogs));
+          }
+          if (parsed.healthNote) {
+            setHealthNote(parsed.healthNote);
+            localStorage.setItem('health_note', parsed.healthNote);
+          }
+          if (parsed.chatMessages) {
+            setChatMessages(parsed.chatMessages);
+            localStorage.setItem('chat_messages', JSON.stringify(parsed.chatMessages));
+          }
+          alert("資料匯入成功！");
+          setShowKeyModal(false);
+        } catch (err) {
+          alert("匯入失敗：JSON 格式錯誤或檔案損毀。");
+        }
+      };
+    }
+  };
+
   const renderCalendarDays = () => {
     const firstDay = new Date(currentYear, currentMonth, 1).getDay();
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -325,7 +377,7 @@ function App() {
     <div className="max-w-md mx-auto min-h-screen flex flex-col bg-slate-950 pb-20">
       <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-lg font-bold text-indigo-400">🌙 睡前健身助理</h1>
-        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與代理</button>
+        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與備份設定</button>
       </header>
 
       <main className="p-4 flex-1 space-y-4">
@@ -563,20 +615,34 @@ function App() {
         </div>
       )}
 
-      {/* Modal: API Key & Proxy 設定 */}
+      {/* Modal: API Key & 跨裝置 JSON 備份設定 */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
-            <h3 className="font-bold text-white text-base">設定 Gemini API</h3>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-4">
+            <h3 className="font-bold text-white text-base">設定與跨裝置備份</h3>
             <div>
               <label className="text-[10px] text-gray-400">Gemini API Key</label>
-              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
             </div>
             <div>
               <label className="text-[10px] text-gray-400">Cloudflare Proxy 網址 (若無限制可留空)</label>
-              <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} placeholder="https://xxx.workers.dev" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
+              <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} placeholder="https://xxx.workers.dev" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
             </div>
-            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">儲存並開始</button>
+            
+            <div className="border-t border-slate-800 pt-3 space-y-2">
+              <label className="text-[10px] text-indigo-400 font-bold block">📦 跨裝置資料同步 (JSON)</label>
+              <div className="flex gap-2">
+                <button onClick={handleExportJson} className="flex-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                  📥 下載備份 (.json)
+                </button>
+                <button onClick={() => fileInputRef.current.click()} className="flex-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                  📤 上載還原
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleImportJson} accept=".json" className="hidden" />
+              </div>
+            </div>
+
+            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-xl text-xs font-bold mt-2">儲存並關閉</button>
           </div>
         </div>
       )}
