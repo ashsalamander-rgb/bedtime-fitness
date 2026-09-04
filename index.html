@@ -35,6 +35,9 @@ function App() {
   const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
   const [healthNote, setHealthNote] = useState(() => localStorage.getItem('health_note') || DEFAULT_HEALTH_NOTE);
   
+  // 字體大小設定 ('sm', 'base', 'lg')
+  const [fontSize, setFontSize] = useState(() => localStorage.getItem('app_font_size') || 'sm');
+
   // JSONBin 相關狀態
   const [jsonBinMasterKey, setJsonBinMasterKey] = useState(() => localStorage.getItem('jsonbin_master_key') || '');
   const [jsonBinId, setJsonBinId] = useState(() => localStorage.getItem('jsonbin_id') || '');
@@ -95,6 +98,14 @@ function App() {
   useEffect(() => { localStorage.setItem('chat_messages', JSON.stringify(chatMessages)); }, [chatMessages]);
   useEffect(() => { localStorage.setItem('jsonbin_master_key', jsonBinMasterKey); }, [jsonBinMasterKey]);
   useEffect(() => { localStorage.setItem('jsonbin_id', jsonBinId); }, [jsonBinId]);
+  useEffect(() => { localStorage.setItem('app_font_size', fontSize); }, [fontSize]);
+
+  // 動態字體樣式對應
+  const getFontSizeClass = () => {
+    if (fontSize === 'lg') return 'text-base';
+    if (fontSize === 'base') return 'text-sm';
+    return 'text-xs';
+  };
 
   const callGemini = async (promptText) => {
     if (!apiKey) {
@@ -111,7 +122,7 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: promptText }] }],
-        systemInstruction: { parts: [{ text: `你是一位專屬睡前伸展健身助理。使用者限制：${healthNote}。請確保動作安全。回覆請務必極度簡短扼要、不囉嗦，直接切入重點。` }] }
+        systemInstruction: { parts: [{ text: `你是一位專業且極具智慧的睡前伸展健身助理。使用者健康限制：${healthNote}。請確保所有動作絕對安全，符合溫和、床上、不傷足底與膝蓋的原則。回覆請精簡俐落，並主動理解使用者的需求與潛在痛點。` }] }
       })
     });
     const data = await res.json();
@@ -170,16 +181,20 @@ function App() {
     setSuggestedAction(null);
 
     try {
+      const libraryNames = library.map(l => l.name).join('、');
       const prompt = `使用者訊息：${userText}
+現有動作庫動作：${libraryNames}
 說明：
-1. 請以最精簡俐落的語氣回答，禁止長篇大論與冗言贅字，直接列出重點與要點。
-2. 如果使用者「明確提及某個動作（如：我想做蚌式、幫我加蚌式）」或「你為其推薦了一個具體的伸展動作」，請嚴格在回答最末尾另起一份，附上以下 JSON 結構（注意：切勿使用 markdown 程式碼塊包裹）：
-{"action":{"name":"精確動作名稱","target":"部位（如：髖部/腰/背/肩）","detail":"動作要點說明（15~25字極簡說明）","count":"建議次數（如：每邊10次）"}}
-3. 如果使用者只是單純聊天、問候或沒有明確提及/推薦具體動作，請勿輸出上述 JSON。`;
+1. 請以智慧、精簡且鼓勵的語氣回答使用者。直接切入重點，提供實用的伸展或健身建議。
+2. 智能判斷：只要使用者的訊息中含有任何想找動作、詢問伸展方法、想改善某個部位、或你主動建議了一個具體的伸展動作，請務必在回答的最末尾，獨立附上以下 JSON 結構（嚴禁使用 markdown 程式碼塊包裹）：
+{"action":{"name":"精確動作名稱","target":"部位（如：腹部/腰/背/肩/髖部/大腿/屁股）","detail":"動作要點說明（15~25字極簡說明）","count":"建議次數（如：10次）"}}
+3. 如果使用者只是單純閒聊且完全不涉及任何具體動作推薦，則不需要輸出該 JSON。`;
 
       const ans = await callGemini(prompt);
-      const match = ans.match(/{"action":\s*{"name":[\s\S]*?}}/);
+      
+      // 改良式 JSON 擷取，支援各種可能的結尾排版
       let cleanAns = ans;
+      const match = ans.match(/{"action":\s*{"name":[\s\S]*?}}/);
 
       if (match) {
         try {
@@ -191,7 +206,20 @@ function App() {
           console.error("JSON parse error:", e);
         }
         cleanAns = ans.replace(match[0], '').trim();
+      } else {
+        // 備用：如果 AI 回覆把 JSON 包在 code block 裡
+        const codeBlockMatch = ans.match(/```(?:json)?\s*({"action":[\s\S]*?})\s*```/);
+        if (codeBlockMatch) {
+          try {
+            const parsed = JSON.parse(codeBlockMatch[1]);
+            if (parsed.action && parsed.action.name) {
+              setSuggestedAction(parsed.action);
+            }
+          } catch (e) {}
+          cleanAns = ans.replace(codeBlockMatch[0], '').trim();
+        }
       }
+
       setChatMessages([...newMsgs, { role: 'model', text: cleanAns }]);
     } catch (err) {
       alert('對話失敗: ' + err.message);
@@ -297,7 +325,7 @@ function App() {
     setDailyLogs(newLogs);
   };
 
-  // JSONBin 雲端上載 (Save to Cloud)
+  // JSONBin 雲端上載
   const handleUploadToJsonBin = async () => {
     if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
       alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
@@ -329,7 +357,7 @@ function App() {
     }
   };
 
-  // JSONBin 雲端下載 (Load from Cloud)
+  // JSONBin 雲端下載
   const handleDownloadFromJsonBin = async () => {
     if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
       alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
@@ -374,6 +402,16 @@ function App() {
     }
   };
 
+  // 計算本月總結資料
+  const getMonthStats = () => {
+    const monthPrefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    const entries = Object.entries(dailyLogs).filter(([dateKey]) => dateKey.startsWith(monthPrefix));
+    const totalDays = entries.length;
+    return { totalDays, entries };
+  };
+
+  const monthStats = getMonthStats();
+
   const renderCalendarDays = () => {
     const firstDay = new Date(currentYear, currentMonth, 1).getDay();
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -391,7 +429,7 @@ function App() {
         <button
           key={dateKey}
           onClick={() => setSelectedDateKey(dateKey)}
-          className={`h-10 border border-slate-800 rounded-lg flex flex-col items-center justify-center relative text-xs transition ${
+          className={`h-10 border border-slate-800 rounded-lg flex flex-col items-center justify-center relative transition ${getFontSizeClass()} ${
             isSelected ? 'bg-indigo-900/60 border-indigo-500 text-white' : 'bg-slate-900 text-gray-300'
           }`}
         >
@@ -406,59 +444,59 @@ function App() {
   };
 
   return (
-    <div className="max-w-md mx-auto min-h-screen flex flex-col bg-slate-950 pb-20">
+    <div className={`max-w-md mx-auto min-h-screen flex flex-col bg-slate-950 pb-20 ${getFontSizeClass()}`}>
       <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
-        <h1 className="text-lg font-bold text-indigo-400">🌙 睡前健身助理</h1>
-        <button onClick={() => setShowKeyModal(true)} className="text-xs bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 金鑰與雲端同步</button>
+        <h1 className="font-bold text-indigo-400 text-base">🌙 睡前健身助理</h1>
+        <button onClick={() => setShowKeyModal(true)} className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">⚙️ 設定與雲端同步</button>
       </header>
 
       <main className="p-4 flex-1 space-y-4">
         {/* TAB 1: 今日菜單 */}
         {activeTab === 'today' && (
           <div className="space-y-4">
-            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 text-xs">
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
               <div className="text-amber-400 font-semibold mb-1">⚠️ 身體狀況限制</div>
               <div className="text-gray-400">{healthNote}</div>
             </div>
 
             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
-              <label className="text-xs font-semibold text-gray-300">今天身體狀況</label>
+              <label className="font-semibold text-gray-300">今天身體狀況</label>
               <div className="flex gap-2 flex-wrap">
                 {['一切正常', '生理期', '腿痛', '很累'].map(c => (
-                  <button key={c} onClick={() => setTodayCondition(c)} className={`px-3 py-1.5 rounded-lg text-xs ${todayCondition === c ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{c}</button>
+                  <button key={c} onClick={() => setTodayCondition(c)} className={`px-3 py-1.5 rounded-lg ${todayCondition === c ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{c}</button>
                 ))}
               </div>
             </div>
 
             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
-              <label className="text-xs font-semibold text-gray-300">加強部位 (可多選)</label>
+              <label className="font-semibold text-gray-300">加強部位 (可多選)</label>
               <div className="flex gap-2 flex-wrap">
-                {['肩', '背', '腰', '髖部', '屁股', '大腿'].map(t => {
+                {['肩', '背', '腰', '腹部', '髖部', '屁股', '大腿'].map(t => {
                   const sel = selectedTargets.includes(t);
                   return (
-                    <button key={t} onClick={() => setSelectedTargets(sel ? selectedTargets.filter(x=>x!==t) : [...selectedTargets, t])} className={`px-3 py-1.5 rounded-lg text-xs ${sel ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{t}</button>
+                    <button key={t} onClick={() => setSelectedTargets(sel ? selectedTargets.filter(x=>x!==t) : [...selectedTargets, t])} className={`px-3 py-1.5 rounded-lg ${sel ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{t}</button>
                   );
                 })}
               </div>
             </div>
 
-            <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-sm">
+            <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl">
               {isGenerating ? '從動作庫抽取生成中...' : '✨ 從動作庫生成今日菜單'}
             </button>
 
             {todayMenu.length > 0 && (
               <div className="space-y-3 pt-2">
-                <h2 className="text-sm font-bold text-gray-300">今日菜單</h2>
+                <h2 className="font-bold text-gray-300">今日菜單</h2>
                 {todayMenu.map((m, i) => (
                   <div key={i} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-start gap-3">
                     <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4" />
                     <div>
-                      <div className="font-bold text-sm text-white">{m.name} <span className="text-xs font-normal text-indigo-400">({m.target} · {m.count || '10次'})</span></div>
-                      <div className="text-xs text-gray-400 mt-1">{m.detail}</div>
+                      <div className="font-bold text-white">{m.name} <span className="font-normal text-indigo-400">({m.target} · {m.count || '10次'})</span></div>
+                      <div className="text-gray-400 mt-1">{m.detail}</div>
                     </div>
                   </div>
                 ))}
-                <button onClick={saveCheckedMenuLogs} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs">
+                <button onClick={saveCheckedMenuLogs} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl">
                   ✅ 勾選完成，儲存今日運動總結至月曆
                 </button>
               </div>
@@ -470,14 +508,14 @@ function App() {
         {activeTab === 'logs' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="font-bold text-sm text-white">運動打卡月曆</h2>
-              <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
+              <h2 className="font-bold text-white">運動打卡月曆</h2>
+              <button onClick={() => openLogModalForDate(selectedDateKey)} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
                 ＋ 手動補／編輯打卡
               </button>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3">
-              <div className="flex justify-between items-center text-xs text-gray-300 font-bold px-1">
+              <div className="flex justify-between items-center text-gray-300 font-bold px-1">
                 <button onClick={() => {
                   if(currentMonth === 0) { setCurrentMonth(11); setCurrentYear(currentYear-1); }
                   else { setCurrentMonth(currentMonth-1); }
@@ -488,7 +526,7 @@ function App() {
                   else { setCurrentMonth(currentMonth+1); }
                 }} className="px-2 py-1 bg-slate-800 rounded">▶</button>
               </div>
-              <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-semibold text-gray-500">
+              <div className="grid grid-cols-7 gap-1 text-center font-semibold text-gray-500">
                 <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
               </div>
               <div className="grid grid-cols-7 gap-1">
@@ -496,29 +534,46 @@ function App() {
               </div>
             </div>
 
+            {/* 本月總結卡片 */}
+            <div className="bg-slate-900 border border-indigo-900/50 rounded-xl p-4 space-y-2">
+              <div className="font-bold text-indigo-400 flex items-center justify-between">
+                <span>📊 {currentYear} 年 {currentMonth + 1} 月 本月總結</span>
+                <span className="bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-800 text-[11px]">
+                  已打卡 {monthStats.totalDays} 天
+                </span>
+              </div>
+              <div className="text-gray-400 text-xs leading-relaxed">
+                {monthStats.totalDays > 0 ? (
+                  `本月累積完成 ${monthStats.totalDays} 天的睡前伸展。持之以恆的溫和伸展能有效放鬆身心，請繼續保持！`
+                ) : (
+                  `本月份尚無打卡紀錄，挑選幾個喜歡的伸展動作開始記錄今天的放鬆時光吧！`
+                )}
+              </div>
+            </div>
+
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                <div className="text-xs font-bold text-indigo-400">📅 {selectedDateKey} 運動總結</div>
+                <div className="font-bold text-indigo-400">📅 {selectedDateKey} 運動總結</div>
                 {dailyLogs[selectedDateKey] && (
                   <div className="flex gap-2">
-                    <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-[11px] bg-indigo-900/80 text-indigo-200 px-2.5 py-1 rounded-lg border border-indigo-700">
+                    <button onClick={() => openLogModalForDate(selectedDateKey)} className="bg-indigo-900/80 text-indigo-200 px-2.5 py-1 rounded-lg border border-indigo-700">
                       ✏️ 編輯
                     </button>
-                    <button onClick={() => handleDeleteDailyLog(selectedDateKey)} className="text-[11px] bg-red-950 text-red-300 px-2 py-1 rounded-lg border border-red-800">
+                    <button onClick={() => handleDeleteDailyLog(selectedDateKey)} className="bg-red-950 text-red-300 px-2 py-1 rounded-lg border border-red-800">
                       🗑️ 刪除
                     </button>
                   </div>
                 )}
               </div>
               {dailyLogs[selectedDateKey] ? (
-                <div className="space-y-1 text-xs">
+                <div className="space-y-1">
                   <div className="text-emerald-400 font-semibold">✔ 當天已完成運動</div>
                   <div className="text-gray-300 mt-2 bg-slate-950 p-2.5 rounded-lg border border-slate-800 leading-relaxed">
                     {dailyLogs[selectedDateKey].summary}
                   </div>
                 </div>
               ) : (
-                <div className="text-xs text-gray-500 py-3 flex justify-between items-center">
+                <div className="text-gray-500 py-3 flex justify-between items-center">
                   <span>這天尚未有運動紀錄。</span>
                   <button onClick={() => openLogModalForDate(selectedDateKey)} className="text-indigo-400 underline font-semibold">
                     新增這天的打卡
@@ -533,8 +588,8 @@ function App() {
         {activeTab === 'library' && (
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <h2 className="font-bold text-sm text-white">動作庫 ({library.length})</h2>
-              <button onClick={openAddLibModal} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
+              <h2 className="font-bold text-white">動作庫 ({library.length})</h2>
+              <button onClick={openAddLibModal} className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-semibold">
                 ＋ 手動新增動作
               </button>
             </div>
@@ -542,16 +597,16 @@ function App() {
               {library.map(item => (
                 <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
                   <div className="space-y-1 pr-2">
-                    <div className="font-bold text-indigo-300 text-sm">
-                      {item.name} <span className="text-xs text-gray-400">({item.target} · {item.count || '10次'})</span>
+                    <div className="font-bold text-indigo-300">
+                      {item.name} <span className="text-gray-400 font-normal">({item.target} · {item.count || '10次'})</span>
                     </div>
-                    <div className="text-xs text-gray-400">{item.detail}</div>
+                    <div className="text-gray-400">{item.detail}</div>
                   </div>
                   <div className="flex gap-1">
-                    <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 text-xs p-1">
+                    <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 p-1">
                       ✏️
                     </button>
-                    <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 text-xs p-1">
+                    <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 p-1">
                       🗑️
                     </button>
                   </div>
@@ -565,15 +620,15 @@ function App() {
         {activeTab === 'chat' && (
           <div className="flex flex-col h-[65vh]">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-              <span className="text-xs text-gray-400">專屬伸展諮詢</span>
-              <button onClick={handleClearChat} className="text-xs bg-slate-800 hover:bg-slate-700 text-gray-300 px-2.5 py-1 rounded-lg border border-slate-700">
+              <span className="text-gray-400">專屬伸展諮詢</span>
+              <button onClick={handleClearChat} className="bg-slate-800 hover:bg-slate-700 text-gray-300 px-2.5 py-1 rounded-lg border border-slate-700">
                 🧹 清空對話
               </button>
             </div>
             <div className="flex-1 overflow-y-auto space-y-3 py-3">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] p-3 rounded-xl text-xs leading-relaxed ${
+                  <div className={`max-w-[85%] p-3 rounded-xl leading-relaxed ${
                     msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-slate-900 border border-slate-800 text-gray-200'
                   }`}>
                     {msg.text}
@@ -582,27 +637,27 @@ function App() {
               ))}
               {suggestedAction && (
                 <div className="bg-slate-900 border border-amber-500/50 p-3 rounded-xl space-y-2 shadow-lg">
-                  <div className="text-xs font-bold text-amber-400 flex items-center gap-1">
+                  <div className="font-bold text-amber-400 flex items-center gap-1">
                     💡 確定將此動作加入動作庫？
                   </div>
-                  <div className="text-xs text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target} · {suggestedAction.count || '10次'})</span></div>
-                  <div className="text-xs text-gray-400">{suggestedAction.detail}</div>
-                  <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-2 rounded-lg transition">
+                  <div className="text-white font-semibold">{suggestedAction.name} <span className="text-indigo-400">({suggestedAction.target} · {suggestedAction.count || '10次'})</span></div>
+                  <div className="text-gray-400">{suggestedAction.detail}</div>
+                  <button onClick={() => addSuggestedToLibrary(suggestedAction)} className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded-lg transition">
                     ＋ 直接加入動作庫
                   </button>
                 </div>
               )}
-              {isChatLoading && <div className="text-xs text-gray-500">助理思考中...</div>}
+              {isChatLoading && <div className="text-gray-500">助理思考中...</div>}
             </div>
             <div className="flex gap-2 pt-2 border-t border-slate-800">
-              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="輸入如：我想做蚌式，幫我整理要點" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500" />
-              <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold">發送</button>
+              <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat()} placeholder="輸入如：我想找一個放鬆腹部的溫和動作" className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500" />
+              <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl font-bold">發送</button>
             </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900 border-t border-slate-800 flex justify-around p-3 z-20 text-xs">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-slate-900 border-t border-slate-800 flex justify-around p-3 z-20">
         <button onClick={() => setActiveTab('today')} className={activeTab === 'today' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>今日菜單</button>
         <button onClick={() => setActiveTab('logs')} className={activeTab === 'logs' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>運動打卡</button>
         <button onClick={() => setActiveTab('library')} className={activeTab === 'library' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>動作庫</button>
@@ -614,13 +669,13 @@ function App() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
             <h3 className="font-bold text-white text-base">{editingLibId ? '編輯動作' : '新增動作至動作庫'}</h3>
-            <input type="text" placeholder="動作名稱" value={libName} onChange={e => setLibName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
-            <input type="text" placeholder="部位（如：腰、背、肩、髖部）" value={libTarget} onChange={e => setLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
-            <input type="text" placeholder="建議次數（例如：12次、每邊8次）" value={libCount} onChange={e => setLibCount(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" />
-            <textarea placeholder="做法說明..." value={libDetail} onChange={e => setLibDetail(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white" rows="3" />
+            <input type="text" placeholder="動作名稱" value={libName} onChange={e => setLibName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
+            <input type="text" placeholder="部位（如：腰、腹部、背、肩）" value={libTarget} onChange={e => setLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
+            <input type="text" placeholder="建議次數（例如：12次、每邊8次）" value={libCount} onChange={e => setLibCount(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
+            <textarea placeholder="做法說明..." value={libDetail} onChange={e => setLibDetail(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" rows="3" />
             <div className="flex gap-2">
-              <button onClick={() => setShowLibModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl text-xs">取消</button>
-              <button onClick={handleSaveLibrary} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">{editingLibId ? '更新動作' : '確定新增'}</button>
+              <button onClick={() => setShowLibModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl">取消</button>
+              <button onClick={handleSaveLibrary} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl font-bold">{editingLibId ? '更新動作' : '確定新增'}</button>
             </div>
           </div>
         </div>
@@ -632,56 +687,79 @@ function App() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
             <h3 className="font-bold text-white text-base">編輯／打卡紀錄</h3>
             <div>
-              <label className="text-[10px] text-gray-400">日期</label>
-              <input type="date" value={newLogDate} onChange={e => setNewLogDate(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              <label className="text-gray-400">日期</label>
+              <input type="date" value={newLogDate} onChange={e => setNewLogDate(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
             </div>
             <div>
-              <label className="text-[10px] text-gray-400">運動總結（做了哪些動作與次數？）</label>
-              <input type="text" placeholder="例如：貓犬式伸展(10次)、仰臥抱膝(12次)" value={newLogSummary} onChange={e => setNewLogSummary(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              <label className="text-gray-400">運動總結（做了哪些動作與次數？）</label>
+              <input type="text" placeholder="例如：貓犬式伸展(10次)、仰臥抱膝(12次)" value={newLogSummary} onChange={e => setNewLogSummary(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
             </div>
             <div className="flex gap-2 pt-2">
-              <button onClick={() => setShowAddLogModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl text-xs">取消</button>
-              <button onClick={handleSaveDailySummary} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-xs font-bold">儲存紀錄</button>
+              <button onClick={() => setShowAddLogModal(false)} className="flex-1 bg-slate-800 text-gray-400 py-2 rounded-xl">取消</button>
+              <button onClick={handleSaveDailySummary} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl font-bold">儲存紀錄</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: API Key & JSONBin 雲端同步設定 */}
+      {/* Modal: API Key, 字體與 JSONBin 設定 */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-4">
-            <h3 className="font-bold text-white text-base">設定與 JSONBin 雲端同步</h3>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-bold text-white text-base">設定與雲端同步</h3>
+            
+            {/* 字體大小調整 */}
             <div>
-              <label className="text-[10px] text-gray-400">Gemini API Key</label>
-              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              <label className="text-indigo-400 font-bold block mb-1">🔤 字體大小</label>
+              <div className="flex gap-2">
+                {[
+                  { id: 'sm', label: '標準' },
+                  { id: 'base', label: '放大' },
+                  { id: 'lg', label: '特大' }
+                ].map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFontSize(f.id)}
+                    className={`flex-1 py-1.5 rounded-xl border text-xs font-semibold ${
+                      fontSize === f.id ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-950 border-slate-700 text-gray-400'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-gray-400">Gemini API Key</label>
+              <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
             </div>
             <div>
-              <label className="text-[10px] text-gray-400">Cloudflare Proxy 網址 (若無限制可留空)</label>
-              <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} placeholder="https://xxx.workers.dev" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+              <label className="text-gray-400">Cloudflare Proxy 網址 (若無限制可留空)</label>
+              <input type="text" value={proxyUrl} onChange={e => setProxyUrl(e.target.value)} placeholder="https://xxx.workers.dev" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
             </div>
             
             <div className="border-t border-slate-800 pt-3 space-y-2">
-              <label className="text-[10px] text-indigo-400 font-bold block">☁️ JSONBin.io 跨裝置同步</label>
+              <label className="text-indigo-400 font-bold block">☁️ JSONBin.io 跨裝置同步</label>
               <div>
-                <label className="text-[10px] text-gray-400">Master Key ($2$x...)</label>
-                <input type="password" value={jsonBinMasterKey} onChange={e => setJsonBinMasterKey(e.target.value)} placeholder="輸入 Master Key" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+                <label className="text-gray-400">Master Key ($2$x...)</label>
+                <input type="password" value={jsonBinMasterKey} onChange={e => setJsonBinMasterKey(e.target.value)} placeholder="輸入 Master Key" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
               </div>
               <div>
-                <label className="text-[10px] text-gray-400">Bin ID</label>
-                <input type="text" value={jsonBinId} onChange={e => setJsonBinId(e.target.value)} placeholder="輸入 Bin ID" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-xs text-white mt-1" />
+                <label className="text-gray-400">Bin ID</label>
+                <input type="text" value={jsonBinId} onChange={e => setJsonBinId(e.target.value)} placeholder="輸入 Bin ID" className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white mt-1" />
               </div>
               <div className="flex gap-2 pt-1">
-                <button onClick={handleUploadToJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                <button onClick={handleUploadToJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 py-2 rounded-xl font-semibold">
                   {isSyncing ? '同步中...' : '☁️ 上載至雲端'}
                 </button>
-                <button onClick={handleDownloadFromJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 py-2 rounded-xl text-xs font-semibold">
+                <button onClick={handleDownloadFromJsonBin} disabled={isSyncing} className="flex-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 py-2 rounded-xl font-semibold">
                   {isSyncing ? '同步中...' : '📥 從雲端下載'}
                 </button>
               </div>
             </div>
 
-            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-xl text-xs font-bold mt-2">儲存並關閉</button>
+            <button onClick={() => setShowKeyModal(false)} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2.5 rounded-xl font-bold mt-2">儲存並關閉</button>
           </div>
         </div>
       )}
