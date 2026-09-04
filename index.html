@@ -28,6 +28,8 @@ const DEFAULT_LIBRARY = [
   { id: '5', name: '睡蓮式肩膀開展', target: '肩', detail: '側臥於床上，雙手前伸重疊，上方手臂向後打開。', count: '8次' }
 ];
 
+const TARGET_OPTIONS = ['肩', '背', '腰', '腹部', '髖部', '屁股', '大腿'];
+
 function App() {
   const [activeTab, setActiveTab] = useState('today');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
@@ -62,11 +64,11 @@ function App() {
   const [checkedMenu, setCheckedMenu] = useState({});
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // 動作庫 Modal
+  // 動作庫 Modal (部位改為陣列多選)
   const [showLibModal, setShowLibModal] = useState(false);
   const [editingLibId, setEditingLibId] = useState(null);
   const [libName, setLibName] = useState('');
-  const [libTarget, setLibTarget] = useState('全身');
+  const [libTargets, setLibTargets] = useState(['全身']);
   const [libDetail, setLibDetail] = useState('');
   const [libCount, setLibCount] = useState('10次');
 
@@ -100,7 +102,6 @@ function App() {
   useEffect(() => { localStorage.setItem('jsonbin_id', jsonBinId); }, [jsonBinId]);
   useEffect(() => { localStorage.setItem('app_font_size', fontSize); }, [fontSize]);
 
-  // 動態字體樣式對應
   const getFontSizeClass = () => {
     if (fontSize === 'lg') return 'text-base';
     if (fontSize === 'base') return 'text-sm';
@@ -122,7 +123,7 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: promptText }] }],
-        systemInstruction: { parts: [{ text: `你是一位專業且極具智慧的睡前伸展健身助理。使用者健康限制：${healthNote}。請確保所有動作絕對安全，符合溫和、床上、不傷足底與膝蓋的原則。回覆請精簡俐落，並主動理解使用者的需求與潛在痛點。` }] }
+        systemInstruction: { parts: [{ text: `你是一位專業且極具智慧的睡前伸展健身助理。使用者健康限制：${healthNote}。請確保所有動作絕對安全，符合溫和、床上、不傷足底與膝蓋的原則。回覆請精簡俐落。` }] }
       })
     });
     const data = await res.json();
@@ -133,10 +134,11 @@ function App() {
   const generateMenu = async () => {
     setIsGenerating(true);
     try {
-      const libraryStr = JSON.stringify(library.map(l => ({ name: l.name, target: l.target, detail: l.detail, count: l.count || '10次' })));
+      const libraryStr = JSON.stringify(library.map(l => ({ name: l.name, target: Array.isArray(l.target) ? l.target.join(',') : l.target, detail: l.detail, count: l.count || '10次' })));
       const prompt = `使用者動作庫：${libraryStr}。
 請優先從上述「使用者動作庫」中挑選組合出今日的睡前伸展菜單。
 今天身體狀況：${todayCondition}。想加強部位：${selectedTargets.join(',') || '由 AI 決定'}。
+請嚴格挑選剛好 6 個動作。
 請嚴格僅輸出 JSON 陣列，格式為：[{"name":"動作名","target":"部位","detail":"做法","count":"12次"}]`;
       const text = await callGemini(prompt);
       const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -145,10 +147,33 @@ function App() {
       setCheckedMenu({});
     } catch (err) {
       alert("產生失敗: " + err.message + "。已從動作庫載入預設菜單。");
-      setTodayMenu(library.slice(0, 4).map(i => ({ ...i, count: i.count || '10次' })));
+      setTodayMenu(library.slice(0, 6).map(i => ({ ...i, target: Array.isArray(i.target) ? i.target.join(',') : i.target, count: i.count || '10次' })));
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // 多抽一個功能
+  const drawOneMore = async () => {
+    if (library.length === 0) {
+      alert("動作庫目前沒有動作可抽！");
+      return;
+    }
+    // 排除已經在今日菜單裡的動作，優先隨機抽一個還沒出現的
+    const existingNames = todayMenu.map(m => m.name);
+    const availableItems = library.filter(l => !existingNames.includes(l.name));
+    const pool = availableItems.length > 0 ? availableItems : library;
+    const randomItem = pool[Math.floor(Math.random() * pool.length)];
+
+    const newItem = {
+      name: randomItem.name,
+      target: Array.isArray(randomItem.target) ? randomItem.target.join(',') : randomItem.target,
+      detail: randomItem.detail,
+      count: randomItem.count || '10次'
+    };
+
+    setTodayMenu(prev => [...prev, newItem]);
+    alert(`✨ 成功加抽一個動作：${newItem.name}！`);
   };
 
   const saveCheckedMenuLogs = () => {
@@ -191,8 +216,6 @@ function App() {
 3. 如果使用者只是單純閒聊且完全不涉及任何具體動作推薦，則不需要輸出該 JSON。`;
 
       const ans = await callGemini(prompt);
-      
-      // 改良式 JSON 擷取，支援各種可能的結尾排版
       let cleanAns = ans;
       const match = ans.match(/{"action":\s*{"name":[\s\S]*?}}/);
 
@@ -202,12 +225,9 @@ function App() {
           if (parsed.action && parsed.action.name) {
             setSuggestedAction(parsed.action);
           }
-        } catch (e) {
-          console.error("JSON parse error:", e);
-        }
+        } catch (e) {}
         cleanAns = ans.replace(match[0], '').trim();
       } else {
-        // 備用：如果 AI 回覆把 JSON 包在 code block 裡
         const codeBlockMatch = ans.match(/```(?:json)?\s*({"action":[\s\S]*?})\s*```/);
         if (codeBlockMatch) {
           try {
@@ -241,7 +261,7 @@ function App() {
     const newItem = {
       id: Date.now().toString(),
       name: action.name,
-      target: action.target || '全身',
+      target: action.target ? [action.target] : ['全身'],
       detail: action.detail || '來自助理推薦',
       count: action.count || '10次'
     };
@@ -253,7 +273,7 @@ function App() {
   const openAddLibModal = () => {
     setEditingLibId(null);
     setLibName('');
-    setLibTarget('全身');
+    setLibTargets(['全身']);
     setLibDetail('');
     setLibCount('10次');
     setShowLibModal(true);
@@ -262,7 +282,14 @@ function App() {
   const openEditLibModal = (item) => {
     setEditingLibId(item.id);
     setLibName(item.name || '');
-    setLibTarget(item.target || '全身');
+    // 兼容舊資料若是字串則轉為陣列
+    let targetsArr = ['全身'];
+    if (Array.isArray(item.target)) {
+      targetsArr = item.target;
+    } else if (typeof item.target === 'string') {
+      targetsArr = item.target.split(',').map(s => s.trim());
+    }
+    setLibTargets(targetsArr);
     setLibDetail(item.detail || '');
     setLibCount(item.count || '10次');
     setShowLibModal(true);
@@ -270,11 +297,12 @@ function App() {
 
   const handleSaveLibrary = () => {
     if (!libName.trim()) return;
+    const finalTargets = libTargets.length > 0 ? libTargets : ['全身'];
     if (editingLibId) {
       setLibrary(prev => prev.map(item => item.id === editingLibId ? {
         ...item,
         name: libName.trim(),
-        target: libTarget || '全身',
+        target: finalTargets,
         detail: libDetail.trim() || '無說明',
         count: libCount.trim() || '10次'
       } : item));
@@ -282,7 +310,7 @@ function App() {
       setLibrary(prev => [...prev, {
         id: Date.now().toString(),
         name: libName.trim(),
-        target: libTarget || '全身',
+        target: finalTargets,
         detail: libDetail.trim() || '無說明',
         count: libCount.trim() || '10次'
       }]);
@@ -325,7 +353,6 @@ function App() {
     setDailyLogs(newLogs);
   };
 
-  // JSONBin 雲端上載
   const handleUploadToJsonBin = async () => {
     if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
       alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
@@ -357,7 +384,6 @@ function App() {
     }
   };
 
-  // JSONBin 雲端下載
   const handleDownloadFromJsonBin = async () => {
     if (!jsonBinMasterKey.trim() || !jsonBinId.trim()) {
       alert("請先填寫 JSONBin 的 Master Key 與 Bin ID");
@@ -402,7 +428,6 @@ function App() {
     }
   };
 
-  // 計算本月總結資料
   const getMonthStats = () => {
     const monthPrefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
     const entries = Object.entries(dailyLogs).filter(([dateKey]) => dateKey.startsWith(monthPrefix));
@@ -471,7 +496,7 @@ function App() {
             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
               <label className="font-semibold text-gray-300">加強部位 (可多選)</label>
               <div className="flex gap-2 flex-wrap">
-                {['肩', '背', '腰', '腹部', '髖部', '屁股', '大腿'].map(t => {
+                {TARGET_OPTIONS.map(t => {
                   const sel = selectedTargets.includes(t);
                   return (
                     <button key={t} onClick={() => setSelectedTargets(sel ? selectedTargets.filter(x=>x!==t) : [...selectedTargets, t])} className={`px-3 py-1.5 rounded-lg ${sel ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-gray-400'}`}>{t}</button>
@@ -481,12 +506,17 @@ function App() {
             </div>
 
             <button onClick={generateMenu} disabled={isGenerating} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl">
-              {isGenerating ? '從動作庫抽取生成中...' : '✨ 從動作庫生成今日菜單'}
+              {isGenerating ? '從動作庫抽取生成中...' : '✨ 從動作庫生成今日菜單 (6個動作)'}
             </button>
 
             {todayMenu.length > 0 && (
               <div className="space-y-3 pt-2">
-                <h2 className="font-bold text-gray-300">今日菜單</h2>
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-gray-300">今日菜單 ({todayMenu.length}個)</h2>
+                  <button onClick={drawOneMore} className="bg-amber-600/80 hover:bg-amber-600 text-white px-3 py-1 rounded-lg text-xs font-semibold">
+                    ✨ 多抽一個
+                  </button>
+                </div>
                 {todayMenu.map((m, i) => (
                   <div key={i} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-start gap-3">
                     <input type="checkbox" checked={!!checkedMenu[i]} onChange={e => setCheckedMenu({...checkedMenu, [i]: e.target.checked})} className="mt-1 w-4 h-4" />
@@ -594,24 +624,27 @@ function App() {
               </button>
             </div>
             <div className="space-y-2">
-              {library.map(item => (
-                <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
-                  <div className="space-y-1 pr-2">
-                    <div className="font-bold text-indigo-300">
-                      {item.name} <span className="text-gray-400 font-normal">({item.target} · {item.count || '10次'})</span>
+              {library.map(item => {
+                const displayTarget = Array.isArray(item.target) ? item.target.join('、') : item.target;
+                return (
+                  <div key={item.id} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex justify-between items-start">
+                    <div className="space-y-1 pr-2">
+                      <div className="font-bold text-indigo-300">
+                        {item.name} <span className="text-gray-400 font-normal">({displayTarget} · {item.count || '10次'})</span>
+                      </div>
+                      <div className="text-gray-400">{item.detail}</div>
                     </div>
-                    <div className="text-gray-400">{item.detail}</div>
+                    <div className="flex gap-1">
+                      <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 p-1">
+                        ✏️
+                      </button>
+                      <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 p-1">
+                        🗑️
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => openEditLibModal(item)} className="text-indigo-400 hover:text-indigo-300 p-1">
-                      ✏️
-                    </button>
-                    <button onClick={() => handleDeleteLibrary(item.id)} className="text-gray-500 hover:text-red-400 p-1">
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -664,13 +697,40 @@ function App() {
         <button onClick={() => setActiveTab('chat')} className={activeTab === 'chat' ? 'text-indigo-400 font-bold' : 'text-gray-400'}>問助理</button>
       </nav>
 
-      {/* Modal: 新增 / 編輯動作庫 */}
+      {/* Modal: 新增 / 編輯動作庫 (部位改用勾選多選) */}
       {showLibModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-sm w-full space-y-3 max-h-[90vh] overflow-y-auto">
             <h3 className="font-bold text-white text-base">{editingLibId ? '編輯動作' : '新增動作至動作庫'}</h3>
             <input type="text" placeholder="動作名稱" value={libName} onChange={e => setLibName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
-            <input type="text" placeholder="部位（如：腰、腹部、背、肩）" value={libTarget} onChange={e => setLibTarget(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
+            
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">部位（可多選）</label>
+              <div className="flex gap-2 flex-wrap">
+                {TARGET_OPTIONS.map(t => {
+                  const sel = libTargets.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        if (sel) {
+                          setLibTargets(libTargets.filter(x => x !== t));
+                        } else {
+                          setLibTargets([...libTargets, t]);
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                        sel ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-950 border-slate-700 text-gray-400'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <input type="text" placeholder="建議次數（例如：12次、每邊8次）" value={libCount} onChange={e => setLibCount(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" />
             <textarea placeholder="做法說明..." value={libDetail} onChange={e => setLibDetail(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 text-white" rows="3" />
             <div className="flex gap-2">
